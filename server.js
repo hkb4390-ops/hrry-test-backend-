@@ -1,247 +1,212 @@
-// ============================================================
-// HRRY.TEST - FREE KEY BACKEND
-// ============================================================
-// Features:
-// 1. New Free Key on every request
-// 2. New ShrinkMe link for every key
-// 3. Same ShrinkMe link ALWAYS shows the same key
-// 4. Key validity = 12 hours
-// 5. Device binding
-// 6. One-time redemption
-// 7. Firestore persistent storage
-// 8. Paid/Permanent key system is NOT touched
-// ============================================================
+// server.js
 
 const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
-const admin = require("firebase-admin");
+
+const { initializeApp, cert } = require("firebase-admin/app");
+const { getDatabase } = require("firebase-admin/database");
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
-// ============================================================
-// ENVIRONMENT VARIABLES
-// ============================================================
-//
-// Render me ye variables add karna:
-//
-// SHRINKME_API_KEY = tumhara ShrinkMe API token
-// WEBSITE_URL      = https://hrry.test
-// FIREBASE_SERVICE_ACCOUNT = Firebase service account JSON
-//
-// IMPORTANT:
-// Real API token ko kabhi frontend/index.html me mat daalna.
-// ============================================================
-
 const PORT = process.env.PORT || 8080;
 
-const WEBSITE_URL = (
-    process.env.WEBSITE_URL ||
-    "https://hrry.test"
-).replace(/\/+$/, "");
+const WEBSITE_URL =
+    (process.env.WEBSITE_URL || process.env.RENDER_EXTERNAL_URL || "").replace(/\/+$/, "");
 
-const SHRINKME_API_KEY = process.env.SHRINKME_API_KEY;
+const SHRINKME_API_KEY =
+    process.env.SHRINKME_API_KEY || "";
 
-if (!SHRINKME_API_KEY) {
-    console.error("❌ SHRINKME_API_KEY missing");
-}
+const FIREBASE_DB_URL =
+    process.env.FIREBASE_DB_URL ||
+    "https://hyuuu-732f9-default-rtdb.firebaseio.com";
 
-if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
-    console.error("❌ FIREBASE_SERVICE_ACCOUNT missing");
-}
 
-// ============================================================
-// FIREBASE / FIRESTORE
-// ============================================================
+// ======================================================
+// FIREBASE ADMIN
+// ======================================================
 
-let db;
+let serviceAccount;
 
 try {
-    const serviceAccount = JSON.parse(
-        process.env.FIREBASE_SERVICE_ACCOUNT
+    serviceAccount = JSON.parse(
+        process.env.FIREBASE_SERVICE_ACCOUNT || "{}"
     );
-
-    admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-    });
-
-    db = admin.firestore();
-
-    console.log("✅ Firebase Admin connected");
 } catch (error) {
-    console.error(
-        "❌ Firebase initialization failed:",
-        error.message
-    );
+    console.error("Invalid FIREBASE_SERVICE_ACCOUNT JSON");
+    process.exit(1);
 }
 
-// ============================================================
-// COLLECTION
-// ============================================================
+if (!serviceAccount.project_id) {
+    console.error("FIREBASE_SERVICE_ACCOUNT is missing project_id");
+    process.exit(1);
+}
 
-const FREE_KEYS_COLLECTION = "hrry_free_keys";
+initializeApp({
+    credential: cert(serviceAccount),
+    databaseURL: FIREBASE_DB_URL
+});
 
-// ============================================================
+const db = getDatabase();
+
+
+// ======================================================
+// SETTINGS
+// ======================================================
+
+const FREE_KEY_DURATION = 12 * 60 * 60 * 1000;
+
+const FREE_KEY_PATH = "hrry_free_keys";
+
+
+// ======================================================
 // HELPERS
-// ============================================================
+// ======================================================
 
-function generateKey() {
-    // Example:
-    // HRRY-7262
-    // HRRY-4819
-    // HRRY-9051
-
-    const number = crypto
-        .randomInt(1000, 10000)
-        .toString();
-
-    return `HRRY-${number}`;
+function randomPart(length = 8) {
+    return crypto
+        .randomBytes(32)
+        .toString("hex")
+        .toUpperCase()
+        .slice(0, length);
 }
 
-function generateRequestId() {
-    return crypto.randomBytes(18).toString("hex");
-}
 
-function generateSecretToken() {
-    return crypto.randomBytes(32).toString("hex");
-}
-
-function normalizeDeviceId(deviceId) {
-    if (!deviceId) return "";
-
-    return String(deviceId)
-        .trim()
-        .slice(0, 200);
-}
-
-function isValidDeviceId(deviceId) {
+function createRequestId() {
     return (
-        typeof deviceId === "string" &&
-        deviceId.length >= 8 &&
-        deviceId.length <= 200
+        Date.now().toString(36) +
+        "-" +
+        randomPart(10).toLowerCase()
     );
 }
 
-// ============================================================
-// HEALTH CHECK
-// ============================================================
+
+function createSecretToken() {
+    return crypto
+        .randomBytes(32)
+        .toString("hex");
+}
+
+
+function createFreeKey() {
+    return `HRRY-FREE-${randomPart(4)}-${randomPart(6)}`;
+}
+
+
+function safe(value) {
+    return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+
+function formatDate(timestamp) {
+    return new Date(timestamp).toLocaleString("en-IN", {
+        timeZone: "Asia/Kolkata",
+        dateStyle: "medium",
+        timeStyle: "medium"
+    });
+}
+
+
+// ======================================================
+// HEALTH
+// ======================================================
 
 app.get("/", (req, res) => {
     res.json({
-        success: true,
-        service: "HRRY.TEST Free Key Backend",
-        status: "online",
-        version: "1.0.0"
+        ok: true,
+        service: "hrry.test Free Key Backend",
+        freeKeyDuration: "12 hours"
     });
 });
 
-// ============================================================
+
+// ======================================================
 // CREATE NEW FREE KEY
-// ============================================================
-//
-// POST /api/free/start
-//
-// Body:
-//
-// {
-//   "deviceId": "USER_DEVICE_ID"
-// }
-//
-// Response:
-//
-// {
-//   success: true,
-//   key: "HRRY-7262",
-//   shrinkmeUrl: "...",
-//   expiresAt: "..."
-// }
-//
-// ============================================================
+// EVERY REQUEST = NEW KEY + NEW SHRINKME LINK
+// ======================================================
 
 app.post("/api/free/start", async (req, res) => {
+
     try {
-        if (!db) {
+
+        const deviceId =
+            String(req.body?.deviceId || "").trim();
+
+        if (!deviceId) {
+            return res.status(400).json({
+                ok: false,
+                error: "deviceId_required"
+            });
+        }
+
+        if (!WEBSITE_URL) {
             return res.status(500).json({
-                success: false,
-                message: "Database is not connected"
+                ok: false,
+                error: "WEBSITE_URL_not_configured"
             });
         }
 
         if (!SHRINKME_API_KEY) {
             return res.status(500).json({
-                success: false,
-                message: "ShrinkMe API is not configured"
+                ok: false,
+                error: "SHRINKME_API_KEY_not_configured"
             });
         }
 
-        const deviceId = normalizeDeviceId(req.body.deviceId);
 
-        if (!isValidDeviceId(deviceId)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid device ID"
-            });
-        }
+        // ----------------------------------------------
+        // NEW REQUEST ID
+        // ----------------------------------------------
 
-        // ----------------------------------------------------
-        // NEW KEY
-        // ----------------------------------------------------
+        const requestId = createRequestId();
 
-        const key = generateKey();
+        const secretToken =
+            createSecretToken();
 
-        // ----------------------------------------------------
-        // UNIQUE REQUEST
-        // ----------------------------------------------------
+        const key =
+            createFreeKey();
 
-        const requestId = generateRequestId();
-
-        // Secret token means the destination cannot be guessed
-        // simply by knowing the request ID.
-        const secretToken = generateSecretToken();
-
-        // ----------------------------------------------------
-        // 12 HOURS
-        // ----------------------------------------------------
-
-        const createdAt = Date.now();
+        const createdAt =
+            Date.now();
 
         const expiresAt =
-            createdAt +
-            (12 * 60 * 60 * 1000);
+            createdAt + FREE_KEY_DURATION;
 
-        // ----------------------------------------------------
+
+        // ----------------------------------------------
         // DESTINATION
-        // ----------------------------------------------------
-        //
-        // IMPORTANT:
-        //
-        // This destination belongs ONLY to this key.
-        //
-        // Opening this URL again will fetch the SAME Firestore
-        // document and therefore the SAME key.
-        //
-        // It will NOT generate another key.
-        //
-        // ----------------------------------------------------
+        // SAME REQUEST WILL ALWAYS RETURN SAME KEY
+        // ----------------------------------------------
 
         const destinationUrl =
-            `${WEBSITE_URL}/free/${requestId}/${secretToken}`;
+            `${WEBSITE_URL}/free/${encodeURIComponent(requestId)}/${encodeURIComponent(secretToken)}`;
 
-        // ----------------------------------------------------
-        // CREATE FIRESTORE RECORD
-        // ----------------------------------------------------
 
-        const freeKeyData = {
-            requestId,
+        // ----------------------------------------------
+        // SAVE FIRST
+        // ----------------------------------------------
+
+        const record = {
 
             key,
 
-            deviceId,
+            type: "free",
+
+            durationHours: 12,
+
+            requestId,
 
             secretToken,
+
+            deviceId,
 
             createdAt,
 
@@ -249,110 +214,99 @@ app.post("/api/free/start", async (req, res) => {
 
             used: false,
 
-            usedAt: null,
+            activated: false,
 
-            status: "created",
+            status: "unused",
 
-            shrinkmeUrl: null,
+            shrinkmeUrl: "",
 
-            destinationUrl,
+            destinationUrl
 
-            createdFrom: "hrry.test",
-
-            type: "free",
-
-            durationHours: 12
         };
 
+
         await db
-            .collection(FREE_KEYS_COLLECTION)
-            .doc(requestId)
-            .set(freeKeyData);
+            .ref(`${FREE_KEY_PATH}/${requestId}`)
+            .set(record);
 
-        // ----------------------------------------------------
-        // CREATE SHRINKME LINK
-        // ----------------------------------------------------
 
-        const params = new URLSearchParams();
+        // ----------------------------------------------
+        // SHRINKME
+        // ----------------------------------------------
 
-        params.set("api", SHRINKME_API_KEY);
-        params.set("url", destinationUrl);
+        const shrinkUrl =
+            `https://shrinkme.io/api?api=${encodeURIComponent(SHRINKME_API_KEY)}&url=${encodeURIComponent(destinationUrl)}`;
 
-        // API request
-        const shrinkmeResponse = await fetch(
-            `https://shrinkme.io/api?${params.toString()}`
-        );
 
-        const shrinkmeText =
-            await shrinkmeResponse.text();
+        const shrinkResponse =
+            await fetch(shrinkUrl);
 
-        let shrinkmeData;
+
+        const shrinkText =
+            await shrinkResponse.text();
+
+
+        let shrinkData;
 
         try {
-            shrinkmeData = JSON.parse(shrinkmeText);
+            shrinkData = JSON.parse(shrinkText);
         } catch {
-            shrinkmeData = {
-                raw: shrinkmeText
-            };
+            shrinkData = null;
         }
 
-        // ----------------------------------------------------
-        // CHECK SHRINKME RESPONSE
-        // ----------------------------------------------------
 
         if (
-            !shrinkmeData ||
-            shrinkmeData.status !== "success" ||
-            !shrinkmeData.shortenedUrl
+            !shrinkResponse.ok ||
+            !shrinkData ||
+            shrinkData.status !== "success" ||
+            !shrinkData.shortenedUrl
         ) {
+
             await db
-                .collection(FREE_KEYS_COLLECTION)
-                .doc(requestId)
+                .ref(`${FREE_KEY_PATH}/${requestId}`)
                 .update({
-                    status: "shrinkme_failed",
-                    shrinkmeResponse: shrinkmeData
+                    status: "shrink_failed",
+                    shrinkError: shrinkText.slice(0, 500)
                 });
 
             return res.status(502).json({
-                success: false,
-                message: "ShrinkMe link could not be created"
+                ok: false,
+                error: "shrinkme_failed"
             });
         }
 
-        const shrinkmeUrl =
-            shrinkmeData.shortenedUrl;
 
-        // ----------------------------------------------------
-        // SAVE SHRINKME URL
-        // ----------------------------------------------------
+        // ----------------------------------------------
+        // SAVE SAME SHORT LINK
+        // ----------------------------------------------
 
         await db
-            .collection(FREE_KEYS_COLLECTION)
-            .doc(requestId)
+            .ref(`${FREE_KEY_PATH}/${requestId}`)
             .update({
-                shrinkmeUrl,
+                shrinkmeUrl: shrinkData.shortenedUrl,
                 status: "ready"
             });
 
-        // ----------------------------------------------------
-        // FINAL RESPONSE
-        // ----------------------------------------------------
+
+        // ----------------------------------------------
+        // RESPONSE
+        // ----------------------------------------------
 
         return res.json({
-            success: true,
 
-            message:
-                "New free key created successfully",
+            ok: true,
 
             requestId,
 
             key,
 
-            shrinkmeUrl,
+            shrinkmeUrl:
+                shrinkData.shortenedUrl,
 
             expiresAt,
 
             durationHours: 12
+
         });
 
     } catch (error) {
@@ -363,37 +317,19 @@ app.post("/api/free/start", async (req, res) => {
         );
 
         return res.status(500).json({
-            success: false,
-            message: "Server error"
+            ok: false,
+            error: "server_error"
         });
     }
+
 });
 
-// ============================================================
-// FIXED KEY DESTINATION
-// ============================================================
-//
-// GET:
-//
-// /free/:requestId/:secretToken
-//
-// VERY IMPORTANT:
-//
-// This route DOES NOT generate a key.
-//
-// It only reads the existing Firestore record.
-//
-// Therefore:
-//
-// Link A -> HRRY-7262
-//
-// Opening Link A again:
-//
-// Link A -> HRRY-7262
-//
-// Forever same record.
-//
-// ============================================================
+
+// ======================================================
+// SAME SHORT LINK
+// ALWAYS SAME KEY
+// NEVER GENERATE A NEW KEY HERE
+// ======================================================
 
 app.get(
     "/free/:requestId/:secretToken",
@@ -401,353 +337,251 @@ app.get(
 
         try {
 
-            if (!db) {
-                return res.status(500).send(
-                    "Database unavailable"
-                );
-            }
-
             const {
                 requestId,
                 secretToken
             } = req.params;
 
-            const docRef = db
-                .collection(FREE_KEYS_COLLECTION)
-                .doc(requestId);
 
             const snapshot =
-                await docRef.get();
+                await db
+                    .ref(`${FREE_KEY_PATH}/${requestId}`)
+                    .once("value");
 
-            if (!snapshot.exists) {
+
+            const data =
+                snapshot.val();
+
+
+            if (!data) {
                 return res.status(404).send(`
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                        <meta charset="UTF-8">
-                        <meta name="viewport"
-                              content="width=device-width,
-                              initial-scale=1">
-                        <title>Free Key</title>
-                    </head>
-
-                    <body style="
-                        background:#080808;
-                        color:white;
-                        font-family:Arial;
-                        text-align:center;
-                        padding:50px 20px;
-                    ">
-
-                        <h2>Link Not Found</h2>
-
-                        <p>
-                            This free-key link is invalid.
-                        </p>
-
-                    </body>
-                    </html>
-                `);
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>hrry.test</title>
+</head>
+<body style="
+margin:0;
+background:#080b14;
+color:white;
+font-family:Arial,sans-serif;
+display:flex;
+align-items:center;
+justify-content:center;
+min-height:100vh;
+text-align:center;
+">
+<div>
+<h2>❌ Invalid Free Key Link</h2>
+<p>This link does not exist.</p>
+</div>
+</body>
+</html>
+`);
             }
 
-            const data = snapshot.data();
-
-            // ------------------------------------------------
-            // SECRET TOKEN CHECK
-            // ------------------------------------------------
 
             if (
-                data.secretToken !==
-                secretToken
+                String(data.secretToken) !==
+                String(secretToken)
             ) {
-                return res.status(403).send(
-                    "Invalid link"
-                );
+
+                return res.status(403).send(`
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Invalid Link</title>
+</head>
+<body style="
+margin:0;
+background:#080b14;
+color:white;
+font-family:Arial,sans-serif;
+display:flex;
+align-items:center;
+justify-content:center;
+min-height:100vh;
+text-align:center;
+">
+<div>
+<h2>🔒 Invalid Link</h2>
+<p>This free-key link is not valid.</p>
+</div>
+</body>
+</html>
+`);
             }
 
-            // ------------------------------------------------
-            // EXPIRY CHECK
-            // ------------------------------------------------
-
-            const now = Date.now();
 
             const expired =
-                now > data.expiresAt;
+                Date.now() > Number(data.expiresAt);
 
-            // ------------------------------------------------
-            // SAME FIXED KEY
-            // ------------------------------------------------
-            //
-            // No generateKey() here.
-            //
-            // We use data.key from Firestore.
-            //
-            // ------------------------------------------------
 
             if (expired) {
 
                 return res.send(`
-                    <!DOCTYPE html>
-
-                    <html>
-                    <head>
-
-                        <meta charset="UTF-8">
-
-                        <meta name="viewport"
-                              content="width=device-width,
-                              initial-scale=1">
-
-                        <title>Free Key Expired</title>
-
-                    </head>
-
-                    <body style="
-                        margin:0;
-                        background:#070707;
-                        color:white;
-                        font-family:Arial;
-                        display:flex;
-                        justify-content:center;
-                        align-items:center;
-                        min-height:100vh;
-                        text-align:center;
-                    ">
-
-                        <div>
-
-                            <h1>
-                                Free Key Expired
-                            </h1>
-
-                            <p>
-                                This key was valid
-                                for 12 hours.
-                            </p>
-
-                        </div>
-
-                    </body>
-                    </html>
-                `);
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>hrry.test</title>
+</head>
+<body style="
+margin:0;
+background:#080b14;
+color:white;
+font-family:Arial,sans-serif;
+display:flex;
+align-items:center;
+justify-content:center;
+min-height:100vh;
+text-align:center;
+">
+<div style="
+width:min(420px,90%);
+padding:28px;
+border-radius:24px;
+background:#111827;
+border:1px solid #263244;
+">
+<div style="font-size:45px">⏰</div>
+<h2>Free Key Expired</h2>
+<p>This 12-hour key has expired.</p>
+</div>
+</body>
+</html>
+`);
             }
 
-            // ------------------------------------------------
-            // SHOW SAME KEY
-            // ------------------------------------------------
 
             return res.send(`
-                <!DOCTYPE html>
-
-                <html>
-
-                <head>
-
-                    <meta charset="UTF-8">
-
-                    <meta name="viewport"
-                          content="width=device-width,
-                          initial-scale=1">
-
-                    <title>HRRY.TEST Free Key</title>
-
-                    <style>
-
-                        * {
-                            box-sizing:border-box;
-                        }
-
-                        body {
-                            margin:0;
-                            min-height:100vh;
-                            background:
-                                radial-gradient(
-                                    circle at top,
-                                    #182848,
-                                    #050505 60%
-                                );
-                            color:white;
-                            font-family:
-                                Arial,
-                                sans-serif;
-
-                            display:flex;
-                            justify-content:center;
-                            align-items:center;
-
-                            padding:20px;
-                        }
-
-                        .box {
-                            width:100%;
-                            max-width:430px;
-
-                            background:
-                                rgba(255,255,255,.08);
-
-                            border:1px solid
-                                rgba(255,255,255,.15);
-
-                            border-radius:24px;
-
-                            padding:30px 22px;
-
-                            text-align:center;
-
-                            backdrop-filter:
-                                blur(20px);
-
-                            box-shadow:
-                                0 20px 60px
-                                rgba(0,0,0,.45);
-                        }
-
-                        .logo {
-                            font-size:28px;
-                            font-weight:900;
-                            margin-bottom:8px;
-                        }
-
-                        .subtitle {
-                            color:#aaa;
-                            font-size:14px;
-                            margin-bottom:25px;
-                        }
-
-                        .key {
-                            font-size:32px;
-                            font-weight:900;
-
-                            letter-spacing:3px;
-
-                            padding:20px 10px;
-
-                            border-radius:16px;
-
-                            background:
-                                rgba(255,255,255,.1);
-
-                            border:
-                                1px solid
-                                rgba(255,255,255,.2);
-
-                            margin:20px 0;
-
-                            user-select:all;
-                        }
-
-                        .copy {
-                            border:0;
-
-                            padding:13px 25px;
-
-                            border-radius:12px;
-
-                            background:#ffffff;
-
-                            color:#000;
-
-                            font-weight:800;
-
-                            font-size:15px;
-
-                            cursor:pointer;
-                        }
-
-                        .info {
-                            margin-top:20px;
-
-                            color:#aaa;
-
-                            font-size:13px;
-
-                            line-height:1.6;
-                        }
-
-                    </style>
-
-                </head>
-
-                <body>
-
-                    <div class="box">
-
-                        <div class="logo">
-                            HRRY.TEST
-                        </div>
-
-                        <div class="subtitle">
-                            Your Free Access Key
-                        </div>
-
-                        <div class="key"
-                             id="key">
-                            ${data.key}
-                        </div>
-
-                        <button
-                            class="copy"
-                            onclick="copyKey()">
-
-                            Copy Key
-
-                        </button>
-
-                        <div class="info">
-
-                            This is the fixed key
-                            assigned to this link.
-
-                            <br><br>
-
-                            Valid for 12 hours
-                            from creation.
-
-                        </div>
-
-                    </div>
-
-                    <script>
-
-                        function copyKey() {
-
-                            const key =
-                                document
-                                .getElementById("key")
-                                .innerText
-                                .trim();
-
-                            navigator
-                                .clipboard
-                                .writeText(key)
-                                .then(() => {
-
-                                    alert(
-                                        "Key copied!"
-                                    );
-
-                                })
-                                .catch(() => {
-
-                                    alert(
-                                        "Copy failed"
-                                    );
-
-                                });
-
-                        }
-
-                    </script>
-
-                </body>
-
-                </html>
-            `);
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>hrry.test Free Key</title>
+
+<style>
+*{
+box-sizing:border-box;
+}
+
+body{
+margin:0;
+min-height:100vh;
+display:flex;
+align-items:center;
+justify-content:center;
+padding:20px;
+font-family:Arial,sans-serif;
+background:
+radial-gradient(circle at top,#172554,#080b14 55%);
+color:white;
+}
+
+.box{
+width:min(430px,100%);
+padding:28px;
+border-radius:28px;
+background:rgba(17,24,39,.92);
+border:1px solid rgba(255,255,255,.12);
+box-shadow:0 30px 80px rgba(0,0,0,.5);
+text-align:center;
+}
+
+.icon{
+font-size:48px;
+margin-bottom:10px;
+}
+
+h1{
+font-size:23px;
+margin:0 0 7px;
+}
+
+.sub{
+font-size:13px;
+color:#94a3b8;
+margin-bottom:20px;
+}
+
+.key{
+padding:17px;
+border-radius:17px;
+background:rgba(99,102,241,.12);
+border:1px solid rgba(99,102,241,.3);
+font-size:22px;
+font-weight:900;
+letter-spacing:1.5px;
+word-break:break-word;
+margin:15px 0;
+}
+
+.info{
+font-size:12px;
+color:#94a3b8;
+line-height:1.6;
+}
+
+.btn{
+display:block;
+text-decoration:none;
+margin-top:18px;
+padding:14px;
+border-radius:14px;
+background:#6366f1;
+color:white;
+font-weight:800;
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="box">
+
+<div class="icon">🎁</div>
+
+<h1>hrry.test Free Key</h1>
+
+<div class="sub">
+12-Hour Free Access
+</div>
+
+<div class="key">
+${safe(data.key)}
+</div>
+
+<div class="info">
+यह वही key है जो इस link से permanently linked है।<br>
+Key validity: 12 hours<br>
+Expires: ${safe(formatDate(data.expiresAt))}
+</div>
+
+<a
+class="btn"
+href="${safe(WEBSITE_URL)}"
+>
+Open hrry.test
+</a>
+
+</div>
+
+</body>
+</html>
+`);
 
         } catch (error) {
 
             console.error(
-                "FREE DESTINATION ERROR:",
+                "FREE LINK ERROR:",
                 error
             );
 
@@ -755,30 +589,16 @@ app.get(
                 "Server error"
             );
         }
+
     }
 );
 
-// ============================================================
+
+// ======================================================
 // REDEEM FREE KEY
-// ============================================================
-//
-// POST /api/free/redeem
-//
-// Body:
-//
-// {
-//   "key": "HRRY-7262",
-//   "deviceId": "DEVICE_ID"
-// }
-//
-// Checks:
-//
-// 1. Key exists
-// 2. Device matches
-// 3. Key not already used
-// 4. Key not expired
-//
-// ============================================================
+// ONE TIME ONLY
+// DEVICE BOUND
+// ======================================================
 
 app.post(
     "/api/free/redeem",
@@ -786,148 +606,208 @@ app.post(
 
         try {
 
-            if (!db) {
-                return res.status(500).json({
-                    success:false,
-                    message:
-                        "Database unavailable"
-                });
-            }
-
             const key =
-                String(req.body.key || "")
+                String(req.body?.key || "")
                     .trim()
                     .toUpperCase();
 
             const deviceId =
-                normalizeDeviceId(
-                    req.body.deviceId
+                String(req.body?.deviceId || "")
+                    .trim();
+
+
+            if (!key || !deviceId) {
+
+                return res.status(400).json({
+                    ok: false,
+                    error: "key_and_device_required"
+                });
+
+            }
+
+
+            const snapshot =
+                await db
+                    .ref(FREE_KEY_PATH)
+                    .orderByChild("key")
+                    .equalTo(key)
+                    .once("value");
+
+
+            const matches =
+                snapshot.val();
+
+
+            if (!matches) {
+
+                return res.status(404).json({
+                    ok: false,
+                    error: "invalid_free_key"
+                });
+
+            }
+
+
+            const requestId =
+                Object.keys(matches)[0];
+
+
+            const ref =
+                db.ref(
+                    `${FREE_KEY_PATH}/${requestId}`
                 );
 
-            if (!key) {
-                return res.status(400).json({
-                    success:false,
-                    message:
-                        "Key is required"
+
+            // ------------------------------------------
+            // ATOMIC ONE-TIME REDEEM
+            // ------------------------------------------
+
+            let transactionResult;
+
+            try {
+
+                transactionResult =
+                    await ref.transaction(
+                        current => {
+
+                            if (!current) {
+                                return;
+                            }
+
+                            const now =
+                                Date.now();
+
+
+                            if (
+                                String(current.key)
+                                !== String(key)
+                            ) {
+                                return;
+                            }
+
+
+                            if (
+                                String(current.deviceId)
+                                !== String(deviceId)
+                            ) {
+                                return;
+                            }
+
+
+                            if (
+                                now >
+                                Number(current.expiresAt)
+                            ) {
+                                return;
+                            }
+
+
+                            if (
+                                current.used === true
+                            ) {
+                                return;
+                            }
+
+
+                            return {
+                                ...current,
+
+                                used: true,
+
+                                activated: true,
+
+                                status: "active",
+
+                                usedAt: now,
+
+                                activatedAt: now
+
+                            };
+
+                        }
+                    );
+
+            } catch (transactionError) {
+
+                console.error(
+                    "Transaction error:",
+                    transactionError
+                );
+
+                return res.status(500).json({
+                    ok: false,
+                    error: "redeem_transaction_failed"
                 });
+
             }
 
-            if (!isValidDeviceId(deviceId)) {
-                return res.status(400).json({
-                    success:false,
-                    message:
-                        "Invalid device ID"
-                });
-            }
-
-            // ------------------------------------------------
-            // FIND KEY
-            // ------------------------------------------------
-
-            const querySnapshot =
-                await db
-                    .collection(
-                        FREE_KEYS_COLLECTION
-                    )
-                    .where(
-                        "key",
-                        "==",
-                        key
-                    )
-                    .limit(1)
-                    .get();
-
-            if (querySnapshot.empty) {
-                return res.status(404).json({
-                    success:false,
-                    message:
-                        "Invalid free key"
-                });
-            }
-
-            const doc =
-                querySnapshot.docs[0];
-
-            const data = doc.data();
-
-            // ------------------------------------------------
-            // DEVICE CHECK
-            // ------------------------------------------------
 
             if (
-                data.deviceId !==
-                deviceId
+                !transactionResult.committed ||
+                !transactionResult.snapshot.exists()
             ) {
 
-                return res.status(403).json({
-                    success:false,
-                    message:
-                        "This key belongs to another device"
+                const latest =
+                    await ref.once("value");
+
+                const latestData =
+                    latest.val();
+
+
+                if (
+                    latestData &&
+                    String(latestData.deviceId)
+                    !== String(deviceId)
+                ) {
+
+                    return res.status(403).json({
+                        ok: false,
+                        error: "key_bound_to_another_device"
+                    });
+
+                }
+
+
+                if (
+                    latestData &&
+                    latestData.used === true
+                ) {
+
+                    return res.status(409).json({
+                        ok: false,
+                        error: "key_already_used"
+                    });
+
+                }
+
+
+                return res.status(400).json({
+                    ok: false,
+                    error: "key_expired_or_invalid"
                 });
+
             }
 
-            // ------------------------------------------------
-            // USED CHECK
-            // ------------------------------------------------
 
-            if (data.used === true) {
+            const finalData =
+                transactionResult.snapshot.val();
 
-                return res.status(403).json({
-                    success:false,
-                    message:
-                        "This key has already been used"
-                });
-            }
-
-            // ------------------------------------------------
-            // EXPIRY CHECK
-            // ------------------------------------------------
-
-            const now = Date.now();
-
-            if (
-                now > data.expiresAt
-            ) {
-
-                return res.status(403).json({
-                    success:false,
-                    message:
-                        "This key has expired"
-                });
-            }
-
-            // ------------------------------------------------
-            // MARK AS USED
-            // ------------------------------------------------
-
-            await doc.ref.update({
-
-                used: true,
-
-                usedAt: now,
-
-                status: "activated"
-
-            });
-
-            // ------------------------------------------------
-            // SUCCESS
-            // ------------------------------------------------
 
             return res.json({
 
-                success:true,
+                ok: true,
 
-                message:
-                    "Free key activated",
+                key: finalData.key,
 
-                key:data.key,
+                deviceId: finalData.deviceId,
 
-                deviceId:data.deviceId,
+                activatedAt:
+                    finalData.activatedAt,
 
-                expiresAt:data.expiresAt,
+                expiresAt:
+                    finalData.expiresAt,
 
-                durationHours:12
+                durationHours: 12
 
             });
 
@@ -939,27 +819,19 @@ app.post(
             );
 
             return res.status(500).json({
-                success:false,
-                message:
-                    "Server error"
+                ok: false,
+                error: "server_error"
             });
+
         }
+
     }
 );
 
-// ============================================================
-// CHECK FREE ACCESS
-// ============================================================
-//
-// POST /api/free/status
-//
-// Body:
-//
-// {
-//   "deviceId": "DEVICE_ID"
-// }
-//
-// ============================================================
+
+// ======================================================
+// CHECK ACTIVE FREE ACCESS
+// ======================================================
 
 app.post(
     "/api/free/status",
@@ -967,85 +839,106 @@ app.post(
 
         try {
 
-            if (!db) {
-                return res.status(500).json({
-                    success:false
-                });
-            }
-
             const deviceId =
-                normalizeDeviceId(
-                    req.body.deviceId
-                );
+                String(req.body?.deviceId || "")
+                    .trim();
 
-            if (!isValidDeviceId(deviceId)) {
+
+            if (!deviceId) {
+
                 return res.status(400).json({
-                    success:false,
-                    message:
-                        "Invalid device ID"
+                    ok: false,
+                    error: "deviceId_required"
                 });
+
             }
+
 
             const snapshot =
                 await db
-                    .collection(
-                        FREE_KEYS_COLLECTION
-                    )
-                    .where(
-                        "deviceId",
-                        "==",
-                        deviceId
-                    )
-                    .where(
-                        "status",
-                        "==",
-                        "activated"
-                    )
-                    .orderBy(
-                        "expiresAt",
-                        "desc"
-                    )
-                    .limit(1)
-                    .get();
+                    .ref(FREE_KEY_PATH)
+                    .orderByChild("deviceId")
+                    .equalTo(deviceId)
+                    .once("value");
 
-            if (snapshot.empty) {
+
+            const records =
+                snapshot.val();
+
+
+            if (!records) {
 
                 return res.json({
-                    success:true,
-                    active:false
+                    ok: true,
+                    active: false
                 });
 
             }
 
-            const data =
-                snapshot.docs[0].data();
 
-            const now = Date.now();
+            const now =
+                Date.now();
 
-            if (
-                now >= data.expiresAt
+
+            let activeRecord = null;
+
+
+            for (
+                const id of Object.keys(records)
             ) {
 
+                const item =
+                    records[id];
+
+
+                if (
+                    item &&
+                    item.activated === true &&
+                    item.used === true &&
+                    Number(item.expiresAt) > now
+                ) {
+
+                    if (
+                        !activeRecord ||
+                        Number(item.expiresAt) >
+                        Number(activeRecord.expiresAt)
+                    ) {
+
+                        activeRecord = item;
+
+                    }
+
+                }
+
+            }
+
+
+            if (!activeRecord) {
+
                 return res.json({
-                    success:true,
-                    active:false,
-                    expired:true
+                    ok: true,
+                    active: false
                 });
 
             }
+
 
             return res.json({
 
-                success:true,
+                ok: true,
 
-                active:true,
+                active: true,
 
-                key:data.key,
+                key: activeRecord.key,
 
-                expiresAt:data.expiresAt,
+                activatedAt:
+                    activeRecord.activatedAt,
+
+                expiresAt:
+                    activeRecord.expiresAt,
 
                 remainingMs:
-                    data.expiresAt - now
+                    Number(activeRecord.expiresAt) - now
 
             });
 
@@ -1057,32 +950,26 @@ app.post(
             );
 
             return res.status(500).json({
-                success:false,
-                message:
-                    "Server error"
+                ok: false,
+                error: "server_error"
             });
+
         }
+
     }
 );
 
-// ============================================================
+
+// ======================================================
 // START SERVER
-// ============================================================
+// ======================================================
 
 app.listen(
     PORT,
     () => {
 
         console.log(
-            `🚀 HRRY Free Key Backend running on port ${PORT}`
-        );
-
-        console.log(
-            `🌐 Website: ${WEBSITE_URL}`
-        );
-
-        console.log(
-            `🗄️ Firestore collection: ${FREE_KEYS_COLLECTION}`
+            `hrry.test Free Key Backend running on port ${PORT}`
         );
 
     }
