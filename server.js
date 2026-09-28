@@ -1,367 +1,282 @@
+'use strict';
+
 const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
-const { initializeApp, cert, getApps } = require('firebase-admin/app');
-const { getDatabase } = require('firebase-admin/database');
+
+const admin = require('firebase-admin');
+const {
+    getDatabase
+} = require('firebase-admin/database');
 
 const app = express();
 
-app.use(cors({
-    origin: true,
-    methods: ['GET', 'POST', 'OPTIONS']
-}));
+const PORT = Number(process.env.PORT || 10000);
+
+const BACKEND_URL =
+    (process.env.BACKEND_URL || '').replace(/\/+$/, '');
+
+const WEBSITE_URL =
+    (process.env.WEBSITE_URL || '').replace(/\/+$/, '');
+
+const SHRINKME_API_KEY =
+    process.env.SHRINKME_API_KEY || '';
+
+const FIREBASE_DB_URL =
+    process.env.FIREBASE_DB_URL || '';
+
+const FIREBASE_SERVICE_ACCOUNT =
+    process.env.FIREBASE_SERVICE_ACCOUNT || '';
+
+/* =========================================================
+   BASIC VALIDATION
+========================================================= */
+
+if (!BACKEND_URL) {
+    console.error('❌ BACKEND_URL missing');
+}
+
+if (!WEBSITE_URL) {
+    console.error('❌ WEBSITE_URL missing');
+}
+
+if (!SHRINKME_API_KEY) {
+    console.error('❌ SHRINKME_API_KEY missing');
+}
+
+if (!FIREBASE_DB_URL) {
+    console.error('❌ FIREBASE_DB_URL missing');
+}
+
+if (!FIREBASE_SERVICE_ACCOUNT) {
+    console.error('❌ FIREBASE_SERVICE_ACCOUNT missing');
+}
+
+
+/* =========================================================
+   CORS
+========================================================= */
+
+const allowedOrigins = new Set([
+    'https://hrrr-test-free.vercel.app',
+    'https://www.hrrr-test-free.vercel.app'
+]);
+
+app.use(
+    cors({
+        origin: function (origin, callback) {
+
+            /*
+             * Browser requests normally contain Origin.
+             * Server-to-server / health requests may not.
+             */
+            if (!origin) {
+                return callback(null, true);
+            }
+
+            if (allowedOrigins.has(origin)) {
+                return callback(null, true);
+            }
+
+            /*
+             * Allow Vercel preview deployments too.
+             */
+            if (
+                /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin)
+            ) {
+                return callback(null, true);
+            }
+
+            return callback(
+                new Error('CORS origin not allowed')
+            );
+        },
+
+        methods: [
+            'GET',
+            'POST',
+            'OPTIONS'
+        ],
+
+        allowedHeaders: [
+            'Content-Type',
+            'Authorization'
+        ],
+
+        credentials: false,
+
+        maxAge: 86400
+    })
+);
 
 app.use(express.json({
     limit: '100kb'
 }));
 
-const PORT = process.env.PORT || 8080;
-
-const BACKEND_URL = (
-    process.env.BACKEND_URL ||
-    process.env.RENDER_EXTERNAL_URL ||
-    'https://hrry-test-backend.onrender.com'
-).replace(/\/$/, '');
-
-const WEBSITE_URL = (
-    process.env.WEBSITE_URL || ''
-).replace(/\/$/, '');
-
-const SHRINKME_API_KEY =
-    process.env.SHRINKME_API_KEY || '';
-
-const FIREBASE_DB_URL = (
-    process.env.FIREBASE_DB_URL ||
-    'https://hyuuu-732f9-default-rtdb.firebaseio.com'
-).replace(/\/$/, '');
-
-const SERVICE_ACCOUNT_RAW =
-    process.env.FIREBASE_SERVICE_ACCOUNT || '';
-
-const FREE_HOURS = 12;
-
-if (!SHRINKME_API_KEY) {
-    console.warn(
-        'WARNING: SHRINKME_API_KEY is missing.'
-    );
-}
-
-if (!SERVICE_ACCOUNT_RAW) {
-    console.warn(
-        'WARNING: FIREBASE_SERVICE_ACCOUNT is missing.'
-    );
-}
-
-let db = null;
+app.use(express.urlencoded({
+    extended: false,
+    limit: '100kb'
+}));
 
 
-/* =========================================
-   FIREBASE ADMIN INITIALIZATION
-========================================= */
+/* =========================================================
+   FIREBASE ADMIN
+========================================================= */
+
+let db;
 
 try {
 
-    if (!SERVICE_ACCOUNT_RAW) {
-        throw new Error(
-            'FIREBASE_SERVICE_ACCOUNT environment variable is missing.'
-        );
-    }
-
     const serviceAccount =
-        JSON.parse(SERVICE_ACCOUNT_RAW);
+        JSON.parse(FIREBASE_SERVICE_ACCOUNT);
 
-    if (
-        !serviceAccount.project_id ||
-        !serviceAccount.client_email ||
-        !serviceAccount.private_key
-    ) {
-        throw new Error(
-            'FIREBASE_SERVICE_ACCOUNT is not a complete Service Account JSON.'
-        );
-    }
+    if (!admin.apps.length) {
 
-    if (getApps().length === 0) {
+        admin.initializeApp({
+            credential: admin.credential.cert(
+                serviceAccount
+            ),
 
-        initializeApp({
-            credential: cert(serviceAccount),
             databaseURL: FIREBASE_DB_URL
         });
-
     }
 
     db = getDatabase();
 
     console.log(
-        'Firebase Realtime Database initialized.'
+        '✅ Firebase Admin initialized'
     );
 
 } catch (error) {
 
     console.error(
-        'Firebase initialization failed:',
+        '❌ Firebase initialization failed:',
         error.message
     );
-
 }
 
 
-/* =========================================
-   DATABASE CHECK
-========================================= */
-
-function requireDatabase(res) {
-
-    if (!db) {
-
-        res.status(503).json({
-            ok: false,
-            error:
-                'Firebase server is not configured correctly.'
-        });
-
-        return false;
-    }
-
-    return true;
-}
-
-
-/* =========================================
+/* =========================================================
    HELPERS
-========================================= */
+========================================================= */
 
-function normalizeDeviceId(value) {
+function createRandomString(length = 32) {
 
-    return String(value || '')
-        .trim()
-        .slice(0, 200);
-
+    return crypto
+        .randomBytes(Math.ceil(length * 0.75))
+        .toString('base64url')
+        .slice(0, length);
 }
 
 
-function safeKey(value) {
+function createFreeKey() {
 
-    return String(value || '')
-        .trim()
-        .toUpperCase();
+    const randomPart =
+        crypto
+            .randomBytes(9)
+            .toString('hex')
+            .toUpperCase();
 
+    return `HRRY-FREE-${randomPart}`;
 }
 
 
-function deviceHash(deviceId) {
+function hashValue(value) {
 
     return crypto
         .createHash('sha256')
-        .update(deviceId)
+        .update(String(value))
         .digest('hex');
-
 }
 
 
-function randomToken(bytes = 18) {
+function normalizeDeviceId(deviceId) {
 
-    return crypto
-        .randomBytes(bytes)
-        .toString('hex');
-
+    return String(deviceId || '')
+        .trim()
+        .slice(0, 300);
 }
 
 
-function randomKey() {
+function now() {
 
-    const a =
-        crypto
-            .randomBytes(4)
-            .toString('hex')
-            .toUpperCase();
-
-    const b =
-        crypto
-            .randomBytes(3)
-            .toString('hex')
-            .toUpperCase();
-
-    return `HRRY-FREE-${a}-${b}`;
-
+    return Date.now();
 }
 
 
-function escapeHtml(value) {
-
-    return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-
-}
-
-
-/* =========================================
-   FIREBASE PATHS
-========================================= */
-
-function getFreeKeyRef(requestId) {
-
-    return db.ref(
-        `hrry_free_keys/${requestId}`
-    );
-
-}
-
-
-function getKeyIndexRef(key) {
-
-    return db.ref(
-        `hrry_free_key_index/${encodeURIComponent(key)}`
-    );
-
-}
-
-
-function getDeviceIndexRef(deviceId) {
-
-    return db.ref(
-        `hrry_free_device_index/${deviceHash(deviceId)}`
-    );
-
-}
-
-
-/* =========================================
-   SHRINKME
-========================================= */
-
-async function createShrinkMeUrl(
-    destinationUrl
-) {
-
-    if (!SHRINKME_API_KEY) {
-
-        throw new Error(
-            'SHRINKME_API_KEY is not configured.'
-        );
-
-    }
-
-    const url =
-        new URL(
-            'https://shrinkme.io/api'
-        );
-
-    url.searchParams.set(
-        'api',
-        SHRINKME_API_KEY
-    );
-
-    url.searchParams.set(
-        'url',
-        destinationUrl
-    );
-
-    const response =
-        await fetch(
-            url,
-            {
-                method: 'GET',
-                headers: {
-                    'Accept':
-                        'application/json,text/plain,*/*'
-                }
-            }
-        );
-
-    const text =
-        await response.text();
-
-    let data = null;
+function isValidHttpUrl(value) {
 
     try {
-        data = JSON.parse(text);
-    } catch (_) {}
 
+        const url = new URL(value);
 
-    if (!response.ok) {
-
-        throw new Error(
-            `ShrinkMe HTTP ${response.status}`
+        return (
+            url.protocol === 'https:' ||
+            url.protocol === 'http:'
         );
 
+    } catch {
+
+        return false;
     }
-
-
-    const shortenedUrl =
-        data?.shortenedUrl ||
-        data?.shortened_url ||
-        (
-            data?.status === 'success'
-                ? data?.url
-                : null
-        );
-
-
-    if (!shortenedUrl) {
-
-        throw new Error(
-            `ShrinkMe did not return shortenedUrl: ${text.slice(0, 300)}`
-        );
-
-    }
-
-
-    return shortenedUrl;
-
 }
 
 
-/* =========================================
+/* =========================================================
+   FIREBASE CHECK
+========================================================= */
+
+function ensureDatabase() {
+
+    if (!db) {
+
+        throw new Error(
+            'Firebase database is not initialized.'
+        );
+    }
+}
+
+
+/* =========================================================
    HEALTH
-========================================= */
+========================================================= */
 
-app.get('/', (_req, res) => {
+app.get('/', (req, res) => {
 
-    res.json({
+    res.status(200).json({
 
         ok: true,
 
         service:
             'hrry.test Free Key Backend',
 
-        freeKeyDurationHours:
-            FREE_HOURS,
+        website:
+            WEBSITE_URL || null,
 
-        firebase:
-            !!db,
-
-        shrinkme:
-            !!SHRINKME_API_KEY
-
+        time:
+            new Date().toISOString()
     });
-
 });
 
 
-app.get('/health', (_req, res) => {
+app.get('/health', (req, res) => {
 
-    res.json({
+    res.status(200).json({
 
         ok: true,
 
         firebase:
-            !!db,
+            Boolean(db),
 
-        shrinkme:
-            !!SHRINKME_API_KEY
-
+        time:
+            new Date().toISOString()
     });
-
 });
 
 
-/* =========================================
-   CREATE NEW FREE KEY
-========================================= */
+/* =========================================================
+   CREATE FREE KEY
+========================================================= */
 
 app.post(
     '/api/free/start',
@@ -369,171 +284,257 @@ app.post(
 
         try {
 
-            if (!requireDatabase(res)) {
-                return;
-            }
+            ensureDatabase();
 
+            if (!SHRINKME_API_KEY) {
+
+                return res.status(500).json({
+
+                    ok: false,
+
+                    error:
+                        'ShrinkMe API key is not configured.'
+                });
+            }
 
             const deviceId =
                 normalizeDeviceId(
                     req.body?.deviceId
                 );
 
-
-            if (
-                !deviceId ||
-                deviceId.length < 8
-            ) {
+            if (!deviceId) {
 
                 return res.status(400).json({
 
                     ok: false,
 
                     error:
-                        'Invalid deviceId.'
-
+                        'Device ID missing.'
                 });
-
             }
 
 
+            /*
+             * Unique request.
+             */
             const requestId =
-                randomToken(16);
+                createRandomString(24);
 
+
+            /*
+             * Secret token protects the destination URL.
+             */
             const secretToken =
-                randomToken(24);
+                createRandomString(48);
 
-            const key =
-                randomKey();
 
-            const now =
-                Date.now();
+            /*
+             * 12 hours.
+             */
+            const createdAt =
+                now();
 
             const expiresAt =
-                now +
-                FREE_HOURS *
-                60 *
-                60 *
-                1000;
+                createdAt +
+                (12 * 60 * 60 * 1000);
 
 
+            /*
+             * Unique Free Key.
+             */
+            const key =
+                createFreeKey();
+
+
+            /*
+             * Destination after ShrinkMe.
+             */
             const destinationUrl =
-                `${BACKEND_URL}/free/${encodeURIComponent(requestId)}/${encodeURIComponent(secretToken)}`;
+                `${BACKEND_URL}/free/${requestId}/${secretToken}`;
 
 
+            if (
+                !isValidHttpUrl(
+                    destinationUrl
+                )
+            ) {
+
+                throw new Error(
+                    'Invalid backend destination URL.'
+                );
+            }
+
+
+            /*
+             * Save initial record first.
+             */
             const record = {
-
-                type:
-                    'free',
-
-                durationHours:
-                    FREE_HOURS,
-
-                requestId,
-
-                secretToken,
 
                 key,
 
-                deviceId,
+                deviceIdHash:
+                    hashValue(deviceId),
 
-                createdAt:
-                    now,
+                secretToken,
+
+                createdAt,
 
                 expiresAt,
 
-                used:
-                    false,
+                used: false,
 
-                usedAt:
-                    null,
+                usedAt: null,
 
-                status:
-                    'created',
+                status: 'active',
 
-                shrinkmeUrl:
-                    null,
+                shrinkmeUrl: '',
 
-                destinationUrl
+                destinationUrl,
 
+                type: 'free',
+
+                durationHours: 12
             };
 
 
-            await getFreeKeyRef(
-                requestId
-            ).set(record);
+            await db
+                .ref(
+                    `hrry_free_keys/${requestId}`
+                )
+                .set(record);
 
 
-            await getKeyIndexRef(
-                key
-            ).set(requestId);
+            /*
+             * Index key -> requestId
+             */
+            await db
+                .ref(
+                    `hrry_free_key_index/${key}`
+                )
+                .set(requestId);
 
 
-            let shrinkmeUrl;
+            /*
+             * Index latest request for device.
+             */
+            await db
+                .ref(
+                    `hrry_free_device_index/${hashValue(deviceId)}`
+                )
+                .set(requestId);
 
+
+            /*
+             * ShrinkMe API
+             */
+            const shrinkMeUrl =
+                new URL(
+                    'https://shrinkme.io/api'
+                );
+
+            shrinkMeUrl.searchParams.set(
+                'api',
+                SHRINKME_API_KEY
+            );
+
+            shrinkMeUrl.searchParams.set(
+                'url',
+                destinationUrl
+            );
+
+
+            const shrinkResponse =
+                await fetch(
+                    shrinkMeUrl.toString(),
+                    {
+                        method: 'GET',
+
+                        headers: {
+                            'Accept':
+                                'application/json'
+                        }
+                    }
+                );
+
+
+            const shrinkText =
+                await shrinkResponse.text();
+
+
+            let shrinkData;
 
             try {
 
-                shrinkmeUrl =
-                    await createShrinkMeUrl(
-                        destinationUrl
+                shrinkData =
+                    JSON.parse(
+                        shrinkText
                     );
 
-            } catch (error) {
+            } catch {
 
-                await getKeyIndexRef(
-                    key
-                )
-                    .remove()
-                    .catch(() => {});
-
-
-                await getFreeKeyRef(
-                    requestId
-                )
-                    .remove()
-                    .catch(() => {});
-
-
-                throw error;
-
+                throw new Error(
+                    'ShrinkMe returned invalid JSON.'
+                );
             }
 
 
-            await getFreeKeyRef(
-                requestId
-            ).update({
+            if (
+                !shrinkResponse.ok ||
+                shrinkData.status !== 'success' ||
+                !shrinkData.shortenedUrl
+            ) {
 
-                shrinkmeUrl,
+                console.error(
+                    'ShrinkMe error:',
+                    shrinkData
+                );
 
-                status:
-                    'ready'
+                throw new Error(
+                    shrinkData.message ||
+                    'ShrinkMe could not create the short link.'
+                );
+            }
 
-            });
+
+            const shortenedUrl =
+                String(
+                    shrinkData.shortenedUrl
+                );
 
 
-            return res.json({
+            /*
+             * Save shortened URL.
+             */
+            await db
+                .ref(
+                    `hrry_free_keys/${requestId}/shrinkmeUrl`
+                )
+                .set(shortenedUrl);
+
+
+            console.log(
+                `✅ Free key created: ${requestId}`
+            );
+
+
+            return res.status(200).json({
 
                 ok: true,
 
                 requestId,
 
-                key,
-
-                shrinkmeUrl,
+                shrinkmeUrl:
+                    shortenedUrl,
 
                 expiresAt,
 
-                durationHours:
-                    FREE_HOURS
-
+                durationHours: 12
             });
-
 
         } catch (error) {
 
             console.error(
-                '/api/free/start:',
+                '❌ /api/free/start:',
                 error
             );
 
@@ -542,20 +543,17 @@ app.post(
                 ok: false,
 
                 error:
-                    'Free key creation failed.'
-
+                    error.message ||
+                    'Free Key creation failed.'
             });
-
         }
-
     }
 );
 
 
-/* =========================================
-   SHRINKME DESTINATION
-   SAME LINK = SAME KEY
-========================================= */
+/* =========================================================
+   FREE KEY LANDING PAGE
+========================================================= */
 
 app.get(
     '/free/:requestId/:secretToken',
@@ -563,345 +561,131 @@ app.get(
 
         try {
 
-            if (!requireDatabase(res)) {
-                return;
-            }
+            ensureDatabase();
 
-
-            const requestId =
-                String(
-                    req.params.requestId || ''
-                );
-
-            const secretToken =
-                String(
-                    req.params.secretToken || ''
-                );
+            const {
+                requestId,
+                secretToken
+            } = req.params;
 
 
             const snapshot =
-                await getFreeKeyRef(
-                    requestId
-                ).get();
+                await db
+                    .ref(
+                        `hrry_free_keys/${requestId}`
+                    )
+                    .once('value');
 
 
             const record =
                 snapshot.val();
 
 
-            if (
-                !record ||
-                record.secretToken !==
-                    secretToken
-            ) {
+            if (!record) {
 
                 return res
                     .status(404)
                     .send(
-                        '<h2>Invalid free-key link.</h2>'
+                        createMessagePage(
+                            'Free Key नहीं मिली',
+                            'यह Free Key link valid नहीं है।',
+                            false
+                        )
                     );
+            }
 
+
+            if (
+                record.secretToken !==
+                secretToken
+            ) {
+
+                return res
+                    .status(403)
+                    .send(
+                        createMessagePage(
+                            'Invalid Link',
+                            'यह link valid नहीं है।',
+                            false
+                        )
+                    );
             }
 
 
             const expired =
-                Date.now() >=
-                Number(
-                    record.expiresAt || 0
-                );
+                now() >=
+                Number(record.expiresAt);
+
+
+            if (expired) {
+
+                return res
+                    .status(410)
+                    .send(
+                        createMessagePage(
+                            'Free Key Expired',
+                            'यह 12-hour Free Key expire हो चुकी है।',
+                            false
+                        )
+                    );
+            }
+
+
+            if (record.used) {
+
+                return res
+                    .status(410)
+                    .send(
+                        createMessagePage(
+                            'Free Key Already Used',
+                            'यह Free Key पहले ही redeem की जा चुकी है।',
+                            false
+                        )
+                    );
+            }
 
 
             const remaining =
                 Math.max(
                     0,
-                    Number(
-                        record.expiresAt || 0
-                    ) -
-                    Date.now()
+                    Number(record.expiresAt) -
+                    now()
                 );
 
 
-            const hours =
-                Math.floor(
-                    remaining /
-                    3600000
+            return res
+                .status(200)
+                .send(
+                    createKeyPage(
+                        record.key,
+                        remaining
+                    )
                 );
-
-
-            const minutes =
-                Math.floor(
-                    (remaining %
-                        3600000) /
-                    60000
-                );
-
-
-            const statusText =
-                expired
-
-                    ? 'This 12-hour key has expired.'
-
-                    : record.used
-
-                        ? 'This key has already been redeemed on its bound device.'
-
-                        : `Valid for about ${hours}h ${minutes}m.`;
-
-
-            const siteButton =
-                WEBSITE_URL
-
-                    ? `<a href="${escapeHtml(WEBSITE_URL)}" class="site-btn">↩ Open hrry.test</a>`
-
-                    : `<button class="site-btn" onclick="history.back()">↩ Go Back</button>`;
-
-
-            res.setHeader(
-                'Cache-Control',
-                'no-store'
-            );
-
-
-            return res.send(`<!doctype html>
-
-<html lang="en">
-
-<head>
-
-<meta charset="utf-8">
-
-<meta
-    name="viewport"
-    content="width=device-width,initial-scale=1"
->
-
-<title>
-    hrry.test • Free Key
-</title>
-
-<style>
-
-*{
-    box-sizing:border-box
-}
-
-body{
-
-    margin:0;
-
-    min-height:100vh;
-
-    display:grid;
-
-    place-items:center;
-
-    background:#07090e;
-
-    color:#f8fafc;
-
-    font-family:
-        system-ui,
-        -apple-system,
-        Segoe UI,
-        sans-serif;
-
-    padding:20px;
-
-}
-
-.box{
-
-    width:min(430px,100%);
-
-    padding:28px;
-
-    border:
-        1px solid
-        rgba(255,255,255,.12);
-
-    border-radius:28px;
-
-    background:
-        rgba(18,24,38,.9);
-
-    box-shadow:
-        0 25px 70px
-        rgba(0,0,0,.45);
-
-    text-align:center;
-
-}
-
-.logo{
-
-    font-size:38px;
-
-}
-
-.title{
-
-    font-size:24px;
-
-    font-weight:900;
-
-    margin:8px 0;
-
-}
-
-.sub{
-
-    color:#94a3b8;
-
-    font-size:13px;
-
-}
-
-.key{
-
-    margin:22px 0;
-
-    padding:18px;
-
-    border-radius:18px;
-
-    background:
-        rgba(99,102,241,.12);
-
-    border:
-        1px solid
-        rgba(129,140,248,.35);
-
-    font-size:23px;
-
-    font-weight:900;
-
-    letter-spacing:1px;
-
-    word-break:break-all;
-
-}
-
-.status{
-
-    font-size:13px;
-
-    color:#cbd5e1;
-
-    margin-bottom:18px;
-
-}
-
-.copy,
-.site-btn{
-
-    display:block;
-
-    width:100%;
-
-    border:0;
-
-    border-radius:14px;
-
-    padding:13px;
-
-    margin-top:10px;
-
-    text-decoration:none;
-
-    font-weight:800;
-
-    font-size:14px;
-
-    cursor:pointer;
-
-}
-
-.copy{
-
-    background:#6366f1;
-
-    color:#fff;
-
-}
-
-.site-btn{
-
-    background:#1f2937;
-
-    color:#fff;
-
-}
-
-</style>
-
-</head>
-
-<body>
-
-<main class="box">
-
-<div class="logo">
-    🎁
-</div>
-
-<div class="title">
-    hrry.test Free Key
-</div>
-
-<div class="sub">
-    12-hour access key
-</div>
-
-<div
-    class="key"
-    id="key"
->
-    ${escapeHtml(record.key)}
-</div>
-
-<div class="status">
-    ${escapeHtml(statusText)}
-</div>
-
-<button
-    class="copy"
-    onclick="navigator.clipboard?.writeText(document.getElementById('key').innerText).then(()=>this.innerText='✓ Copied')"
->
-    📋 Copy Key
-</button>
-
-${siteButton}
-
-</main>
-
-</body>
-
-</html>`);
-
 
         } catch (error) {
 
             console.error(
-                '/free/:requestId/:secretToken:',
+                '❌ Free key landing error:',
                 error
             );
 
             return res
                 .status(500)
                 .send(
-                    '<h2>Server error.</h2>'
+                    createMessagePage(
+                        'Server Error',
+                        'Free Key page अभी उपलब्ध नहीं है।',
+                        false
+                    )
                 );
-
         }
-
     }
 );
 
 
-/* =========================================
+/* =========================================================
    REDEEM FREE KEY
-   ONE TIME ONLY
-========================================= */
+========================================================= */
 
 app.post(
     '/api/free/redeem',
@@ -909,10 +693,14 @@ app.post(
 
         try {
 
-            if (!requireDatabase(res)) {
-                return;
-            }
+            ensureDatabase();
 
+            const key =
+                String(
+                    req.body?.key || ''
+                )
+                    .trim()
+                    .toUpperCase();
 
             const deviceId =
                 normalizeDeviceId(
@@ -920,15 +708,34 @@ app.post(
                 );
 
 
-            const key =
-                safeKey(
-                    req.body?.key
-                );
+            if (!key) {
+
+                return res.status(400).json({
+
+                    ok: false,
+
+                    error:
+                        'Key missing.'
+                });
+            }
+
+
+            if (!deviceId) {
+
+                return res.status(400).json({
+
+                    ok: false,
+
+                    error:
+                        'Device ID missing.'
+                });
+            }
 
 
             if (
-                !deviceId ||
-                !key
+                !key.startsWith(
+                    'HRRY-FREE-'
+                )
             ) {
 
                 return res.status(400).json({
@@ -936,17 +743,20 @@ app.post(
                     ok: false,
 
                     error:
-                        'deviceId and key are required.'
-
+                        'यह Free Key नहीं है।'
                 });
-
             }
 
 
+            /*
+             * Find request by key.
+             */
             const indexSnapshot =
-                await getKeyIndexRef(
-                    key
-                ).get();
+                await db
+                    .ref(
+                        `hrry_free_key_index/${key}`
+                    )
+                    .once('value');
 
 
             const requestId =
@@ -960,69 +770,100 @@ app.post(
                     ok: false,
 
                     error:
-                        'Invalid free key.'
-
+                        'Invalid Free Key.'
                 });
-
             }
 
 
-            const ref =
-                getFreeKeyRef(
-                    requestId
+            const recordRef =
+                db.ref(
+                    `hrry_free_keys/${requestId}`
                 );
 
 
-            const transactionResult =
-                await ref.transaction(
-                    (record) => {
+            /*
+             * Atomic transaction.
+             *
+             * This prevents two devices from successfully
+             * redeeming the same key at the same time.
+             */
+            let transactionResult;
 
-                        if (!record)
+            transactionResult =
+                await recordRef.transaction(
+                    current => {
+
+                        if (!current) {
                             return;
+                        }
+
+
+                        const currentTime =
+                            now();
+
 
                         if (
-                            record.key !==
-                            key
-                        )
+                            current.used === true
+                        ) {
+
                             return;
+                        }
+
 
                         if (
-                            record.deviceId !==
-                            deviceId
-                        )
+                            current.key !== key
+                        ) {
+
                             return;
+                        }
+
 
                         if (
-                            record.used ===
-                            true
-                        )
-                            return;
-
-                        if (
-                            Date.now() >=
+                            currentTime >=
                             Number(
-                                record.expiresAt ||
-                                0
+                                current.expiresAt
                             )
-                        )
+                        ) {
+
                             return;
+                        }
+
+
+                        const expectedDeviceHash =
+                            current.deviceIdHash;
+
+
+                        const actualDeviceHash =
+                            hashValue(
+                                deviceId
+                            );
+
+
+                        /*
+                         * Key is bound to the device
+                         * that requested it.
+                         */
+                        if (
+                            expectedDeviceHash !==
+                            actualDeviceHash
+                        ) {
+
+                            return;
+                        }
 
 
                         return {
 
-                            ...record,
+                            ...current,
 
-                            used:
-                                true,
+                            used: true,
 
                             usedAt:
-                                Date.now(),
+                                currentTime,
 
                             status:
-                                'active'
-
+                                'used'
                         };
-
                     }
                 );
 
@@ -1031,10 +872,13 @@ app.post(
                 !transactionResult.committed
             ) {
 
+                const latestSnapshot =
+                    await recordRef.once(
+                        'value'
+                    );
+
                 const latest =
-                    (
-                        await ref.get()
-                    ).val();
+                    latestSnapshot.val();
 
 
                 if (!latest) {
@@ -1044,52 +888,27 @@ app.post(
                         ok: false,
 
                         error:
-                            'Invalid free key.'
-
+                            'Free Key नहीं मिली।'
                     });
-
                 }
 
 
-                if (
-                    latest.deviceId !==
-                    deviceId
-                ) {
-
-                    return res.status(403).json({
-
-                        ok: false,
-
-                        error:
-                            'This key belongs to another device.'
-
-                    });
-
-                }
-
-
-                if (
-                    latest.used ===
-                    true
-                ) {
+                if (latest.used) {
 
                     return res.status(409).json({
 
                         ok: false,
 
                         error:
-                            'This free key has already been used.'
-
+                            'यह Free Key पहले ही इस्तेमाल हो चुकी है।'
                     });
-
                 }
 
 
                 if (
-                    Date.now() >=
+                    now() >=
                     Number(
-                        latest.expiresAt ||
-                        0
+                        latest.expiresAt
                     )
                 ) {
 
@@ -1098,10 +917,23 @@ app.post(
                         ok: false,
 
                         error:
-                            'This free key has expired.'
-
+                            'यह Free Key expire हो चुकी है।'
                     });
+                }
 
+
+                if (
+                    latest.deviceIdHash !==
+                    hashValue(deviceId)
+                ) {
+
+                    return res.status(403).json({
+
+                        ok: false,
+
+                        error:
+                            'यह Free Key दूसरे device के लिए है।'
+                    });
                 }
 
 
@@ -1110,44 +942,40 @@ app.post(
                     ok: false,
 
                     error:
-                        'Key could not be redeemed. Try again.'
-
+                        'Free Key redeem नहीं हो सकी।'
                 });
-
             }
 
 
-            const record =
-                transactionResult
-                    .snapshot
-                    .val();
+            const finalSnapshot =
+                await recordRef.once(
+                    'value'
+                );
 
 
-            await getDeviceIndexRef(
-                deviceId
-            ).set(requestId);
+            const finalRecord =
+                finalSnapshot.val();
 
 
-            return res.json({
+            return res.status(200).json({
 
                 ok: true,
 
                 key:
-                    record.key,
+                    finalRecord.key,
 
                 expiresAt:
-                    record.expiresAt,
+                    Number(
+                        finalRecord.expiresAt
+                    ),
 
-                durationHours:
-                    FREE_HOURS
-
+                durationHours: 12
             });
-
 
         } catch (error) {
 
             console.error(
-                '/api/free/redeem:',
+                '❌ /api/free/redeem:',
                 error
             );
 
@@ -1156,19 +984,17 @@ app.post(
                 ok: false,
 
                 error:
-                    'Free key redemption failed.'
-
+                    error.message ||
+                    'Free Key verification failed.'
             });
-
         }
-
     }
 );
 
 
-/* =========================================
-   SERVER-SIDE FREE ACCESS STATUS
-========================================= */
+/* =========================================================
+   CHECK FREE ACCESS
+========================================================= */
 
 app.post(
     '/api/free/status',
@@ -1176,10 +1002,7 @@ app.post(
 
         try {
 
-            if (!requireDatabase(res)) {
-                return;
-            }
-
+            ensureDatabase();
 
             const deviceId =
                 normalizeDeviceId(
@@ -1194,91 +1017,101 @@ app.post(
                     ok: false,
 
                     error:
-                        'deviceId is required.'
-
+                        'Device ID missing.'
                 });
-
             }
 
 
-            const deviceIndex =
-                await getDeviceIndexRef(
+            const deviceHash =
+                hashValue(
                     deviceId
-                ).get();
+                );
+
+
+            const indexSnapshot =
+                await db
+                    .ref(
+                        `hrry_free_device_index/${deviceHash}`
+                    )
+                    .once('value');
 
 
             const requestId =
-                deviceIndex.val();
+                indexSnapshot.val();
 
 
             if (!requestId) {
 
-                return res.json({
+                return res.status(200).json({
 
                     ok: true,
 
                     active: false
-
                 });
-
             }
 
 
-            const snapshot =
-                await getFreeKeyRef(
-                    requestId
-                ).get();
+            const recordSnapshot =
+                await db
+                    .ref(
+                        `hrry_free_keys/${requestId}`
+                    )
+                    .once('value');
 
 
             const record =
-                snapshot.val();
+                recordSnapshot.val();
 
 
-            if (
-                !record ||
-                record.deviceId !==
-                    deviceId ||
-                record.used !== true
-            ) {
+            if (!record) {
 
-                return res.json({
+                return res.status(200).json({
 
                     ok: true,
 
                     active: false
-
                 });
-
             }
+
+
+            const currentTime =
+                now();
 
 
             const expiresAt =
                 Number(
-                    record.expiresAt || 0
+                    record.expiresAt
                 );
 
 
-            if (
-                Date.now() >=
-                expiresAt
-            ) {
+            /*
+             * Access is valid until expiration.
+             */
+            const active =
+                record.used === true
+                    ? false
+                    : (
+                        currentTime <
+                        expiresAt
+                    );
 
-                return res.json({
+
+            if (!active) {
+
+                return res.status(200).json({
 
                     ok: true,
 
                     active: false,
 
-                    expired: true,
-
-                    expiresAt
-
+                    expired:
+                        currentTime >=
+                        expiresAt
                 });
-
             }
 
 
-            return res.json({
+            return res.status(200).json({
 
                 ok: true,
 
@@ -1287,18 +1120,13 @@ app.post(
                 key:
                     record.key,
 
-                expiresAt,
-
-                durationHours:
-                    FREE_HOURS
-
+                expiresAt
             });
-
 
         } catch (error) {
 
             console.error(
-                '/api/free/status:',
+                '❌ /api/free/status:',
                 error
             );
 
@@ -1307,38 +1135,437 @@ app.post(
                 ok: false,
 
                 error:
-                    'Status check failed.'
-
+                    'Free access status check failed.'
             });
-
         }
-
     }
 );
 
 
-/* =========================================
+/* =========================================================
+   ERROR HANDLER
+========================================================= */
+
+app.use(
+    (error, req, res, next) => {
+
+        console.error(
+            '❌ Server error:',
+            error
+        );
+
+        if (
+            error.message ===
+            'CORS origin not allowed'
+        ) {
+
+            return res.status(403).json({
+
+                ok: false,
+
+                error:
+                    'CORS origin not allowed.'
+            });
+        }
+
+
+        return res.status(500).json({
+
+            ok: false,
+
+            error:
+                'Internal server error.'
+        });
+    }
+);
+
+
+/* =========================================================
+   HTML HELPERS
+========================================================= */
+
+function escapeHtml(value) {
+
+    return String(value)
+        .replace(
+            /&/g,
+            '&amp;'
+        )
+        .replace(
+            /</g,
+            '&lt;'
+        )
+        .replace(
+            />/g,
+            '&gt;'
+        )
+        .replace(
+            /"/g,
+            '&quot;'
+        )
+        .replace(
+            /'/g,
+            '&#039;'
+        );
+}
+
+
+function formatRemaining(ms) {
+
+    const totalSeconds =
+        Math.floor(
+            Math.max(0, ms) / 1000
+        );
+
+    const hours =
+        Math.floor(
+            totalSeconds / 3600
+        );
+
+    const minutes =
+        Math.floor(
+            (totalSeconds % 3600) / 60
+        );
+
+    return `${hours}h ${minutes}m`;
+}
+
+
+function createKeyPage(
+    key,
+    remainingMs
+) {
+
+    const safeKey =
+        escapeHtml(key);
+
+    const remaining =
+        escapeHtml(
+            formatRemaining(
+                remainingMs
+            )
+        );
+
+    const website =
+        escapeHtml(
+            WEBSITE_URL || '#'
+        );
+
+
+    return `<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+/>
+
+<title>HRRY Free Key</title>
+
+<style>
+
+*{
+    box-sizing:border-box;
+}
+
+body{
+    margin:0;
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:20px;
+    background:
+        radial-gradient(
+            circle at top,
+            #18245c,
+            #070914 60%
+        );
+    color:#fff;
+    font-family:
+        Arial,
+        sans-serif;
+}
+
+.card{
+    width:min(430px,100%);
+    padding:28px;
+    border-radius:26px;
+    text-align:center;
+    background:rgba(255,255,255,.08);
+    border:1px solid rgba(255,255,255,.14);
+    box-shadow:
+        0 30px 80px rgba(0,0,0,.45);
+    backdrop-filter:blur(25px);
+}
+
+.icon{
+    font-size:48px;
+    margin-bottom:12px;
+}
+
+h1{
+    margin:0 0 8px;
+    font-size:25px;
+}
+
+p{
+    color:rgba(255,255,255,.68);
+    line-height:1.5;
+}
+
+.key{
+    margin:22px 0;
+    padding:18px;
+    border-radius:18px;
+    background:rgba(99,102,241,.18);
+    border:1px solid rgba(129,140,248,.35);
+    font-size:20px;
+    font-weight:900;
+    letter-spacing:1.5px;
+    word-break:break-all;
+}
+
+.time{
+    margin-bottom:18px;
+    color:#a5b4fc;
+    font-weight:700;
+}
+
+button{
+    width:100%;
+    padding:14px;
+    border:0;
+    border-radius:14px;
+    cursor:pointer;
+    font-size:15px;
+    font-weight:800;
+    background:#6366f1;
+    color:white;
+}
+
+a{
+    display:block;
+    margin-top:14px;
+    color:#a5b4fc;
+    text-decoration:none;
+    font-size:13px;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="card">
+
+<div class="icon">🔑</div>
+
+<h1>Your Free Test Key</h1>
+
+<p>
+Your 12-hour Free Key is ready.
+</p>
+
+<div
+    class="key"
+    id="key"
+>${safeKey}</div>
+
+<div class="time">
+⏱ Approximately ${remaining} remaining
+</div>
+
+<button
+    onclick="copyKey()"
+>
+Copy Free Key
+</button>
+
+<a href="${website}">
+Return to hrrr.test
+</a>
+
+</div>
+
+<script>
+
+async function copyKey(){
+
+    const key =
+        document
+            .getElementById('key')
+            .innerText
+            .trim();
+
+    try{
+
+        await navigator
+            .clipboard
+            .writeText(key);
+
+        alert(
+            'Free Key copied!'
+        );
+
+    }catch{
+
+        alert(
+            'Key: ' + key
+        );
+    }
+}
+
+</script>
+
+</body>
+
+</html>`;
+}
+
+
+function createMessagePage(
+    title,
+    message,
+    success
+) {
+
+    const safeTitle =
+        escapeHtml(title);
+
+    const safeMessage =
+        escapeHtml(message);
+
+    const website =
+        escapeHtml(
+            WEBSITE_URL || '#'
+        );
+
+
+    return `<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+/>
+
+<title>${safeTitle}</title>
+
+<style>
+
+body{
+    margin:0;
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:20px;
+    background:#070914;
+    color:white;
+    font-family:Arial,sans-serif;
+}
+
+.card{
+    width:min(430px,100%);
+    text-align:center;
+    padding:30px;
+    border-radius:25px;
+    background:rgba(255,255,255,.08);
+    border:1px solid rgba(255,255,255,.12);
+}
+
+.icon{
+    font-size:50px;
+    margin-bottom:15px;
+}
+
+h1{
+    margin:0 0 12px;
+}
+
+p{
+    color:rgba(255,255,255,.7);
+    line-height:1.5;
+}
+
+a{
+    display:inline-block;
+    margin-top:18px;
+    padding:13px 18px;
+    border-radius:13px;
+    background:#6366f1;
+    color:white;
+    text-decoration:none;
+    font-weight:800;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="card">
+
+<div class="icon">
+${success ? '🔑' : '⚠️'}
+</div>
+
+<h1>
+${safeTitle}
+</h1>
+
+<p>
+${safeMessage}
+</p>
+
+<a href="${website}">
+Return to hrry.test
+</a>
+
+</div>
+
+</body>
+
+</html>`;
+}
+
+
+/* =========================================================
    START SERVER
-========================================= */
+========================================================= */
 
 app.listen(
     PORT,
+    '0.0.0.0',
     () => {
 
         console.log(
-            `hrry.test Free Key backend listening on port ${PORT}`
+            `🚀 Server running on port ${PORT}`
         );
 
         console.log(
-            `BACKEND_URL: ${BACKEND_URL}`
+            `🌐 Backend: ${BACKEND_URL || '(not set)'}`
         );
 
         console.log(
-            `WEBSITE_URL: ${
-                WEBSITE_URL ||
-                '(not set)'
-            }`
+            `🌐 Website: ${WEBSITE_URL || '(not set)'}`
         );
 
+        console.log(
+            `🔥 Firebase: ${db ? 'connected' : 'NOT CONNECTED'}`
+        );
     }
 );
