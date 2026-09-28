@@ -1,7 +1,8 @@
 {
   "name": "hrry-test-free-key-backend",
   "version": "1.0.0",
-  "description": "hrry.test 12-hour free key backend",
+  "private": true,
+  "description": "hrry.test 12-hour Free Key backend",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
