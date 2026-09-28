@@ -16,7 +16,7 @@
  Realtime Database
 
  FREE KEY:
- 12 Hours
+ 1 Hour
 
 ============================================================
 */
@@ -80,10 +80,11 @@ const SHRINKME_API_KEY = String(
 
 /*
   Free Key validity
+  1 HOUR
 */
 
 const FREE_KEY_DURATION_MS =
-    12 * 60 * 60 * 1000;
+    1 * 60 * 60 * 1000;
 
 
 /* =========================================================
@@ -773,6 +774,11 @@ app.post(
                 createFreeKey();
 
 
+            /*
+              IMPORTANT:
+              Free Key validity = 1 hour
+            */
+
             const expiresAt =
                 now +
                 FREE_KEY_DURATION_MS;
@@ -832,7 +838,7 @@ app.post(
                     'free',
 
                 durationHours:
-                    12
+                    1
 
             };
 
@@ -1094,7 +1100,7 @@ app.post(
                 expiresAt,
 
                 durationHours:
-                    12
+                    1
 
             });
 
@@ -1231,7 +1237,7 @@ app.get(
                     .send(
                         renderMessagePage(
                             '⏰ Key Expired',
-                            'यह Free Key 12 घंटे के बाद expire हो चुकी है।'
+                            'यह Free Key 1 घंटे के बाद expire हो चुकी है।'
                         )
                     );
 
@@ -1658,7 +1664,7 @@ app.post(
                         ),
 
                     durationHours:
-                        12,
+                        1,
 
                     status:
                         'active',
@@ -1673,21 +1679,6 @@ app.post(
 
             /* =================================================
                ATOMIC TRANSACTION
-               
-               IMPORTANT FIX:
-               -----------------------------------------------
-               पहले वाले code में invalid condition पर:
-
-                   return;
-
-               होता था।
-
-               Firebase में undefined return transaction
-               को ABORT कर देता है।
-
-               यहाँ हर valid current object पर current
-               वापस किया जाता है, इसलिए transaction
-               बेवजह abort नहीं होगा।
             ================================================= */
 
             const redeemedAt =
@@ -1702,9 +1693,6 @@ app.post(
 
                         /*
                           Unexpectedly missing record.
-
-                          Returning null means no valid record
-                          can be created by this transaction.
                         */
 
                         if (
@@ -1719,9 +1707,6 @@ app.post(
                         /*
                           If already redeemed, keep current
                           value instead of returning undefined.
-
-                          This prevents the old
-                          "committed=false" conflict path.
                         */
 
                         if (
@@ -1951,11 +1936,6 @@ app.post(
 
             /*
               At this point the key is active.
-
-              Whether this request performed the actual
-              transition or another simultaneous request
-              did it first, the resulting access state is
-              valid for this same device.
             */
 
             console.log('');
@@ -2011,7 +1991,7 @@ app.post(
                     ),
 
                 durationHours:
-                    12,
+                    1,
 
                 status:
                     'active',
@@ -2297,7 +2277,7 @@ app.post(
                     ),
 
                 durationHours:
-                    12,
+                    1,
 
                 status:
                     'active'
@@ -2649,7 +2629,7 @@ button {
     </h1>
 
     <div class="subtitle">
-        तुम्हारी 12-hour Free Key तैयार है।
+        तुम्हारी 1-hour Free Key तैयार है।
     </div>
 
     <div
@@ -2684,7 +2664,7 @@ button {
 
     <div class="info">
 
-        ⏰ Valid for 12 hours
+        ⏰ Valid for 1 hour
 
         <br>
 
@@ -3167,6 +3147,11 @@ app.listen(
         console.log(
             'WEBSITE_URL:',
             WEBSITE_URL
+        );
+
+        console.log(
+            'FREE KEY VALIDITY:',
+            '1 HOUR'
         );
 
         console.log(
