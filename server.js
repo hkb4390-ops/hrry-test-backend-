@@ -1,826 +1,549 @@
-// server.js
-
-const express = require("express");
-const cors = require("cors");
-const crypto = require("crypto");
-
-const { initializeApp, cert } = require("firebase-admin/app");
-const { getDatabase } = require("firebase-admin/database");
+const express = require('express');
+const cors = require('cors');
+const crypto = require('crypto');
+const { initializeApp, cert, getApps } = require('firebase-admin/app');
+const { getDatabase } = require('firebase-admin/database');
 
 const app = express();
 
-app.use(cors());
-app.use(express.json());
+app.use(cors({
+    origin: true,
+    methods: ['GET', 'POST', 'OPTIONS']
+}));
+
+app.use(express.json({
+    limit: '100kb'
+}));
 
 const PORT = process.env.PORT || 8080;
 
-const WEBSITE_URL =
-    (process.env.WEBSITE_URL || process.env.RENDER_EXTERNAL_URL || "").replace(/\/+$/, "");
+const BACKEND_URL = (
+    process.env.BACKEND_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    'https://hrry-test-backend.onrender.com'
+).replace(/\/$/, '');
+
+const WEBSITE_URL = (
+    process.env.WEBSITE_URL || ''
+).replace(/\/$/, '');
 
 const SHRINKME_API_KEY =
-    process.env.SHRINKME_API_KEY || "";
+    process.env.SHRINKME_API_KEY || '';
 
-const FIREBASE_DB_URL =
+const FIREBASE_DB_URL = (
     process.env.FIREBASE_DB_URL ||
-    "https://hyuuu-732f9-default-rtdb.firebaseio.com";
+    'https://hyuuu-732f9-default-rtdb.firebaseio.com'
+).replace(/\/$/, '');
+
+const SERVICE_ACCOUNT_RAW =
+    process.env.FIREBASE_SERVICE_ACCOUNT || '';
+
+const FREE_HOURS = 12;
+
+if (!SHRINKME_API_KEY) {
+    console.warn(
+        'WARNING: SHRINKME_API_KEY is missing.'
+    );
+}
+
+if (!SERVICE_ACCOUNT_RAW) {
+    console.warn(
+        'WARNING: FIREBASE_SERVICE_ACCOUNT is missing.'
+    );
+}
+
+let db = null;
 
 
-// ======================================================
-// FIREBASE ADMIN
-// ======================================================
-
-let serviceAccount;
+/* =========================================
+   FIREBASE ADMIN INITIALIZATION
+========================================= */
 
 try {
-    serviceAccount = JSON.parse(
-        process.env.FIREBASE_SERVICE_ACCOUNT || "{}"
-    );
-} catch (error) {
-    console.error("Invalid FIREBASE_SERVICE_ACCOUNT JSON");
-    process.exit(1);
-}
 
-if (!serviceAccount.project_id) {
-    console.error("FIREBASE_SERVICE_ACCOUNT is missing project_id");
-    process.exit(1);
-}
-
-initializeApp({
-    credential: cert(serviceAccount),
-    databaseURL: FIREBASE_DB_URL
-});
-
-const db = getDatabase();
-
-
-// ======================================================
-// SETTINGS
-// ======================================================
-
-const FREE_KEY_DURATION = 12 * 60 * 60 * 1000;
-
-const FREE_KEY_PATH = "hrry_free_keys";
-
-
-// ======================================================
-// HELPERS
-// ======================================================
-
-function randomPart(length = 8) {
-    return crypto
-        .randomBytes(32)
-        .toString("hex")
-        .toUpperCase()
-        .slice(0, length);
-}
-
-
-function createRequestId() {
-    return (
-        Date.now().toString(36) +
-        "-" +
-        randomPart(10).toLowerCase()
-    );
-}
-
-
-function createSecretToken() {
-    return crypto
-        .randomBytes(32)
-        .toString("hex");
-}
-
-
-function createFreeKey() {
-    return `HRRY-FREE-${randomPart(4)}-${randomPart(6)}`;
-}
-
-
-function safe(value) {
-    return String(value || "")
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
-
-
-function formatDate(timestamp) {
-    return new Date(timestamp).toLocaleString("en-IN", {
-        timeZone: "Asia/Kolkata",
-        dateStyle: "medium",
-        timeStyle: "medium"
-    });
-}
-
-
-// ======================================================
-// HEALTH
-// ======================================================
-
-app.get("/", (req, res) => {
-    res.json({
-        ok: true,
-        service: "hrry.test Free Key Backend",
-        freeKeyDuration: "12 hours"
-    });
-});
-
-
-// ======================================================
-// CREATE NEW FREE KEY
-// EVERY REQUEST = NEW KEY + NEW SHRINKME LINK
-// ======================================================
-
-app.post("/api/free/start", async (req, res) => {
-
-    try {
-
-        const deviceId =
-            String(req.body?.deviceId || "").trim();
-
-        if (!deviceId) {
-            return res.status(400).json({
-                ok: false,
-                error: "deviceId_required"
-            });
-        }
-
-        if (!WEBSITE_URL) {
-            return res.status(500).json({
-                ok: false,
-                error: "WEBSITE_URL_not_configured"
-            });
-        }
-
-        if (!SHRINKME_API_KEY) {
-            return res.status(500).json({
-                ok: false,
-                error: "SHRINKME_API_KEY_not_configured"
-            });
-        }
-
-
-        // ----------------------------------------------
-        // NEW REQUEST ID
-        // ----------------------------------------------
-
-        const requestId = createRequestId();
-
-        const secretToken =
-            createSecretToken();
-
-        const key =
-            createFreeKey();
-
-        const createdAt =
-            Date.now();
-
-        const expiresAt =
-            createdAt + FREE_KEY_DURATION;
-
-
-        // ----------------------------------------------
-        // DESTINATION
-        // SAME REQUEST WILL ALWAYS RETURN SAME KEY
-        // ----------------------------------------------
-
-        const destinationUrl =
-            `${WEBSITE_URL}/free/${encodeURIComponent(requestId)}/${encodeURIComponent(secretToken)}`;
-
-
-        // ----------------------------------------------
-        // SAVE FIRST
-        // ----------------------------------------------
-
-        const record = {
-
-            key,
-
-            type: "free",
-
-            durationHours: 12,
-
-            requestId,
-
-            secretToken,
-
-            deviceId,
-
-            createdAt,
-
-            expiresAt,
-
-            used: false,
-
-            activated: false,
-
-            status: "unused",
-
-            shrinkmeUrl: "",
-
-            destinationUrl
-
-        };
-
-
-        await db
-            .ref(`${FREE_KEY_PATH}/${requestId}`)
-            .set(record);
-
-
-        // ----------------------------------------------
-        // SHRINKME
-        // ----------------------------------------------
-
-        const shrinkUrl =
-            `https://shrinkme.io/api?api=${encodeURIComponent(SHRINKME_API_KEY)}&url=${encodeURIComponent(destinationUrl)}`;
-
-
-        const shrinkResponse =
-            await fetch(shrinkUrl);
-
-
-        const shrinkText =
-            await shrinkResponse.text();
-
-
-        let shrinkData;
-
-        try {
-            shrinkData = JSON.parse(shrinkText);
-        } catch {
-            shrinkData = null;
-        }
-
-
-        if (
-            !shrinkResponse.ok ||
-            !shrinkData ||
-            shrinkData.status !== "success" ||
-            !shrinkData.shortenedUrl
-        ) {
-
-            await db
-                .ref(`${FREE_KEY_PATH}/${requestId}`)
-                .update({
-                    status: "shrink_failed",
-                    shrinkError: shrinkText.slice(0, 500)
-                });
-
-            return res.status(502).json({
-                ok: false,
-                error: "shrinkme_failed"
-            });
-        }
-
-
-        // ----------------------------------------------
-        // SAVE SAME SHORT LINK
-        // ----------------------------------------------
-
-        await db
-            .ref(`${FREE_KEY_PATH}/${requestId}`)
-            .update({
-                shrinkmeUrl: shrinkData.shortenedUrl,
-                status: "ready"
-            });
-
-
-        // ----------------------------------------------
-        // RESPONSE
-        // ----------------------------------------------
-
-        return res.json({
-
-            ok: true,
-
-            requestId,
-
-            key,
-
-            shrinkmeUrl:
-                shrinkData.shortenedUrl,
-
-            expiresAt,
-
-            durationHours: 12
-
-        });
-
-    } catch (error) {
-
-        console.error(
-            "FREE START ERROR:",
-            error
+    if (!SERVICE_ACCOUNT_RAW) {
+        throw new Error(
+            'FIREBASE_SERVICE_ACCOUNT environment variable is missing.'
         );
-
-        return res.status(500).json({
-            ok: false,
-            error: "server_error"
-        });
     }
 
+    const serviceAccount =
+        JSON.parse(SERVICE_ACCOUNT_RAW);
+
+    if (
+        !serviceAccount.project_id ||
+        !serviceAccount.client_email ||
+        !serviceAccount.private_key
+    ) {
+        throw new Error(
+            'FIREBASE_SERVICE_ACCOUNT is not a complete Service Account JSON.'
+        );
+    }
+
+    if (getApps().length === 0) {
+
+        initializeApp({
+            credential: cert(serviceAccount),
+            databaseURL: FIREBASE_DB_URL
+        });
+
+    }
+
+    db = getDatabase();
+
+    console.log(
+        'Firebase Realtime Database initialized.'
+    );
+
+} catch (error) {
+
+    console.error(
+        'Firebase initialization failed:',
+        error.message
+    );
+
+}
+
+
+/* =========================================
+   DATABASE CHECK
+========================================= */
+
+function requireDatabase(res) {
+
+    if (!db) {
+
+        res.status(503).json({
+            ok: false,
+            error:
+                'Firebase server is not configured correctly.'
+        });
+
+        return false;
+    }
+
+    return true;
+}
+
+
+/* =========================================
+   HELPERS
+========================================= */
+
+function normalizeDeviceId(value) {
+
+    return String(value || '')
+        .trim()
+        .slice(0, 200);
+
+}
+
+
+function safeKey(value) {
+
+    return String(value || '')
+        .trim()
+        .toUpperCase();
+
+}
+
+
+function deviceHash(deviceId) {
+
+    return crypto
+        .createHash('sha256')
+        .update(deviceId)
+        .digest('hex');
+
+}
+
+
+function randomToken(bytes = 18) {
+
+    return crypto
+        .randomBytes(bytes)
+        .toString('hex');
+
+}
+
+
+function randomKey() {
+
+    const a =
+        crypto
+            .randomBytes(4)
+            .toString('hex')
+            .toUpperCase();
+
+    const b =
+        crypto
+            .randomBytes(3)
+            .toString('hex')
+            .toUpperCase();
+
+    return `HRRY-FREE-${a}-${b}`;
+
+}
+
+
+function escapeHtml(value) {
+
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+
+}
+
+
+/* =========================================
+   FIREBASE PATHS
+========================================= */
+
+function getFreeKeyRef(requestId) {
+
+    return db.ref(
+        `hrry_free_keys/${requestId}`
+    );
+
+}
+
+
+function getKeyIndexRef(key) {
+
+    return db.ref(
+        `hrry_free_key_index/${encodeURIComponent(key)}`
+    );
+
+}
+
+
+function getDeviceIndexRef(deviceId) {
+
+    return db.ref(
+        `hrry_free_device_index/${deviceHash(deviceId)}`
+    );
+
+}
+
+
+/* =========================================
+   SHRINKME
+========================================= */
+
+async function createShrinkMeUrl(
+    destinationUrl
+) {
+
+    if (!SHRINKME_API_KEY) {
+
+        throw new Error(
+            'SHRINKME_API_KEY is not configured.'
+        );
+
+    }
+
+    const url =
+        new URL(
+            'https://shrinkme.io/api'
+        );
+
+    url.searchParams.set(
+        'api',
+        SHRINKME_API_KEY
+    );
+
+    url.searchParams.set(
+        'url',
+        destinationUrl
+    );
+
+    const response =
+        await fetch(
+            url,
+            {
+                method: 'GET',
+                headers: {
+                    'Accept':
+                        'application/json,text/plain,*/*'
+                }
+            }
+        );
+
+    const text =
+        await response.text();
+
+    let data = null;
+
+    try {
+        data = JSON.parse(text);
+    } catch (_) {}
+
+
+    if (!response.ok) {
+
+        throw new Error(
+            `ShrinkMe HTTP ${response.status}`
+        );
+
+    }
+
+
+    const shortenedUrl =
+        data?.shortenedUrl ||
+        data?.shortened_url ||
+        (
+            data?.status === 'success'
+                ? data?.url
+                : null
+        );
+
+
+    if (!shortenedUrl) {
+
+        throw new Error(
+            `ShrinkMe did not return shortenedUrl: ${text.slice(0, 300)}`
+        );
+
+    }
+
+
+    return shortenedUrl;
+
+}
+
+
+/* =========================================
+   HEALTH
+========================================= */
+
+app.get('/', (_req, res) => {
+
+    res.json({
+
+        ok: true,
+
+        service:
+            'hrry.test Free Key Backend',
+
+        freeKeyDurationHours:
+            FREE_HOURS,
+
+        firebase:
+            !!db,
+
+        shrinkme:
+            !!SHRINKME_API_KEY
+
+    });
+
 });
 
 
-// ======================================================
-// SAME SHORT LINK
-// ALWAYS SAME KEY
-// NEVER GENERATE A NEW KEY HERE
-// ======================================================
+app.get('/health', (_req, res) => {
 
-app.get(
-    "/free/:requestId/:secretToken",
+    res.json({
+
+        ok: true,
+
+        firebase:
+            !!db,
+
+        shrinkme:
+            !!SHRINKME_API_KEY
+
+    });
+
+});
+
+
+/* =========================================
+   CREATE NEW FREE KEY
+========================================= */
+
+app.post(
+    '/api/free/start',
     async (req, res) => {
 
         try {
 
-            const {
-                requestId,
-                secretToken
-            } = req.params;
-
-
-            const snapshot =
-                await db
-                    .ref(`${FREE_KEY_PATH}/${requestId}`)
-                    .once("value");
-
-
-            const data =
-                snapshot.val();
-
-
-            if (!data) {
-                return res.status(404).send(`
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>hrry.test</title>
-</head>
-<body style="
-margin:0;
-background:#080b14;
-color:white;
-font-family:Arial,sans-serif;
-display:flex;
-align-items:center;
-justify-content:center;
-min-height:100vh;
-text-align:center;
-">
-<div>
-<h2>❌ Invalid Free Key Link</h2>
-<p>This link does not exist.</p>
-</div>
-</body>
-</html>
-`);
+            if (!requireDatabase(res)) {
+                return;
             }
+
+
+            const deviceId =
+                normalizeDeviceId(
+                    req.body?.deviceId
+                );
 
 
             if (
-                String(data.secretToken) !==
-                String(secretToken)
+                !deviceId ||
+                deviceId.length < 8
             ) {
 
-                return res.status(403).send(`
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Invalid Link</title>
-</head>
-<body style="
-margin:0;
-background:#080b14;
-color:white;
-font-family:Arial,sans-serif;
-display:flex;
-align-items:center;
-justify-content:center;
-min-height:100vh;
-text-align:center;
-">
-<div>
-<h2>🔒 Invalid Link</h2>
-<p>This free-key link is not valid.</p>
-</div>
-</body>
-</html>
-`);
-            }
-
-
-            const expired =
-                Date.now() > Number(data.expiresAt);
-
-
-            if (expired) {
-
-                return res.send(`
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>hrry.test</title>
-</head>
-<body style="
-margin:0;
-background:#080b14;
-color:white;
-font-family:Arial,sans-serif;
-display:flex;
-align-items:center;
-justify-content:center;
-min-height:100vh;
-text-align:center;
-">
-<div style="
-width:min(420px,90%);
-padding:28px;
-border-radius:24px;
-background:#111827;
-border:1px solid #263244;
-">
-<div style="font-size:45px">⏰</div>
-<h2>Free Key Expired</h2>
-<p>This 12-hour key has expired.</p>
-</div>
-</body>
-</html>
-`);
-            }
-
-
-            return res.send(`
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>hrry.test Free Key</title>
-
-<style>
-*{
-box-sizing:border-box;
-}
-
-body{
-margin:0;
-min-height:100vh;
-display:flex;
-align-items:center;
-justify-content:center;
-padding:20px;
-font-family:Arial,sans-serif;
-background:
-radial-gradient(circle at top,#172554,#080b14 55%);
-color:white;
-}
-
-.box{
-width:min(430px,100%);
-padding:28px;
-border-radius:28px;
-background:rgba(17,24,39,.92);
-border:1px solid rgba(255,255,255,.12);
-box-shadow:0 30px 80px rgba(0,0,0,.5);
-text-align:center;
-}
-
-.icon{
-font-size:48px;
-margin-bottom:10px;
-}
-
-h1{
-font-size:23px;
-margin:0 0 7px;
-}
-
-.sub{
-font-size:13px;
-color:#94a3b8;
-margin-bottom:20px;
-}
-
-.key{
-padding:17px;
-border-radius:17px;
-background:rgba(99,102,241,.12);
-border:1px solid rgba(99,102,241,.3);
-font-size:22px;
-font-weight:900;
-letter-spacing:1.5px;
-word-break:break-word;
-margin:15px 0;
-}
-
-.info{
-font-size:12px;
-color:#94a3b8;
-line-height:1.6;
-}
-
-.btn{
-display:block;
-text-decoration:none;
-margin-top:18px;
-padding:14px;
-border-radius:14px;
-background:#6366f1;
-color:white;
-font-weight:800;
-}
-
-</style>
-</head>
-
-<body>
-
-<div class="box">
-
-<div class="icon">🎁</div>
-
-<h1>hrry.test Free Key</h1>
-
-<div class="sub">
-12-Hour Free Access
-</div>
-
-<div class="key">
-${safe(data.key)}
-</div>
-
-<div class="info">
-यह वही key है जो इस link से permanently linked है।<br>
-Key validity: 12 hours<br>
-Expires: ${safe(formatDate(data.expiresAt))}
-</div>
-
-<a
-class="btn"
-href="${safe(WEBSITE_URL)}"
->
-Open hrry.test
-</a>
-
-</div>
-
-</body>
-</html>
-`);
-
-        } catch (error) {
-
-            console.error(
-                "FREE LINK ERROR:",
-                error
-            );
-
-            return res.status(500).send(
-                "Server error"
-            );
-        }
-
-    }
-);
-
-
-// ======================================================
-// REDEEM FREE KEY
-// ONE TIME ONLY
-// DEVICE BOUND
-// ======================================================
-
-app.post(
-    "/api/free/redeem",
-    async (req, res) => {
-
-        try {
-
-            const key =
-                String(req.body?.key || "")
-                    .trim()
-                    .toUpperCase();
-
-            const deviceId =
-                String(req.body?.deviceId || "")
-                    .trim();
-
-
-            if (!key || !deviceId) {
-
                 return res.status(400).json({
+
                     ok: false,
-                    error: "key_and_device_required"
-                });
 
-            }
+                    error:
+                        'Invalid deviceId.'
 
-
-            const snapshot =
-                await db
-                    .ref(FREE_KEY_PATH)
-                    .orderByChild("key")
-                    .equalTo(key)
-                    .once("value");
-
-
-            const matches =
-                snapshot.val();
-
-
-            if (!matches) {
-
-                return res.status(404).json({
-                    ok: false,
-                    error: "invalid_free_key"
                 });
 
             }
 
 
             const requestId =
-                Object.keys(matches)[0];
+                randomToken(16);
+
+            const secretToken =
+                randomToken(24);
+
+            const key =
+                randomKey();
+
+            const now =
+                Date.now();
+
+            const expiresAt =
+                now +
+                FREE_HOURS *
+                60 *
+                60 *
+                1000;
 
 
-            const ref =
-                db.ref(
-                    `${FREE_KEY_PATH}/${requestId}`
-                );
+            const destinationUrl =
+                `${BACKEND_URL}/free/${encodeURIComponent(requestId)}/${encodeURIComponent(secretToken)}`;
 
 
-            // ------------------------------------------
-            // ATOMIC ONE-TIME REDEEM
-            // ------------------------------------------
+            const record = {
 
-            let transactionResult;
+                type:
+                    'free',
+
+                durationHours:
+                    FREE_HOURS,
+
+                requestId,
+
+                secretToken,
+
+                key,
+
+                deviceId,
+
+                createdAt:
+                    now,
+
+                expiresAt,
+
+                used:
+                    false,
+
+                usedAt:
+                    null,
+
+                status:
+                    'created',
+
+                shrinkmeUrl:
+                    null,
+
+                destinationUrl
+
+            };
+
+
+            await getFreeKeyRef(
+                requestId
+            ).set(record);
+
+
+            await getKeyIndexRef(
+                key
+            ).set(requestId);
+
+
+            let shrinkmeUrl;
+
 
             try {
 
-                transactionResult =
-                    await ref.transaction(
-                        current => {
-
-                            if (!current) {
-                                return;
-                            }
-
-                            const now =
-                                Date.now();
-
-
-                            if (
-                                String(current.key)
-                                !== String(key)
-                            ) {
-                                return;
-                            }
-
-
-                            if (
-                                String(current.deviceId)
-                                !== String(deviceId)
-                            ) {
-                                return;
-                            }
-
-
-                            if (
-                                now >
-                                Number(current.expiresAt)
-                            ) {
-                                return;
-                            }
-
-
-                            if (
-                                current.used === true
-                            ) {
-                                return;
-                            }
-
-
-                            return {
-                                ...current,
-
-                                used: true,
-
-                                activated: true,
-
-                                status: "active",
-
-                                usedAt: now,
-
-                                activatedAt: now
-
-                            };
-
-                        }
+                shrinkmeUrl =
+                    await createShrinkMeUrl(
+                        destinationUrl
                     );
 
-            } catch (transactionError) {
+            } catch (error) {
 
-                console.error(
-                    "Transaction error:",
-                    transactionError
-                );
-
-                return res.status(500).json({
-                    ok: false,
-                    error: "redeem_transaction_failed"
-                });
-
-            }
+                await getKeyIndexRef(
+                    key
+                )
+                    .remove()
+                    .catch(() => {});
 
 
-            if (
-                !transactionResult.committed ||
-                !transactionResult.snapshot.exists()
-            ) {
-
-                const latest =
-                    await ref.once("value");
-
-                const latestData =
-                    latest.val();
+                await getFreeKeyRef(
+                    requestId
+                )
+                    .remove()
+                    .catch(() => {});
 
 
-                if (
-                    latestData &&
-                    String(latestData.deviceId)
-                    !== String(deviceId)
-                ) {
-
-                    return res.status(403).json({
-                        ok: false,
-                        error: "key_bound_to_another_device"
-                    });
-
-                }
-
-
-                if (
-                    latestData &&
-                    latestData.used === true
-                ) {
-
-                    return res.status(409).json({
-                        ok: false,
-                        error: "key_already_used"
-                    });
-
-                }
-
-
-                return res.status(400).json({
-                    ok: false,
-                    error: "key_expired_or_invalid"
-                });
+                throw error;
 
             }
 
 
-            const finalData =
-                transactionResult.snapshot.val();
+            await getFreeKeyRef(
+                requestId
+            ).update({
+
+                shrinkmeUrl,
+
+                status:
+                    'ready'
+
+            });
 
 
             return res.json({
 
                 ok: true,
 
-                key: finalData.key,
+                requestId,
 
-                deviceId: finalData.deviceId,
+                key,
 
-                activatedAt:
-                    finalData.activatedAt,
+                shrinkmeUrl,
 
-                expiresAt:
-                    finalData.expiresAt,
+                expiresAt,
 
-                durationHours: 12
+                durationHours:
+                    FREE_HOURS
 
             });
+
 
         } catch (error) {
 
             console.error(
-                "FREE REDEEM ERROR:",
+                '/api/free/start:',
                 error
             );
 
             return res.status(500).json({
+
                 ok: false,
-                error: "server_error"
+
+                error:
+                    'Free key creation failed.'
+
             });
 
         }
@@ -829,95 +552,727 @@ app.post(
 );
 
 
-// ======================================================
-// CHECK ACTIVE FREE ACCESS
-// ======================================================
+/* =========================================
+   SHRINKME DESTINATION
+   SAME LINK = SAME KEY
+========================================= */
 
-app.post(
-    "/api/free/status",
+app.get(
+    '/free/:requestId/:secretToken',
     async (req, res) => {
 
         try {
 
+            if (!requireDatabase(res)) {
+                return;
+            }
+
+
+            const requestId =
+                String(
+                    req.params.requestId || ''
+                );
+
+            const secretToken =
+                String(
+                    req.params.secretToken || ''
+                );
+
+
+            const snapshot =
+                await getFreeKeyRef(
+                    requestId
+                ).get();
+
+
+            const record =
+                snapshot.val();
+
+
+            if (
+                !record ||
+                record.secretToken !==
+                    secretToken
+            ) {
+
+                return res
+                    .status(404)
+                    .send(
+                        '<h2>Invalid free-key link.</h2>'
+                    );
+
+            }
+
+
+            const expired =
+                Date.now() >=
+                Number(
+                    record.expiresAt || 0
+                );
+
+
+            const remaining =
+                Math.max(
+                    0,
+                    Number(
+                        record.expiresAt || 0
+                    ) -
+                    Date.now()
+                );
+
+
+            const hours =
+                Math.floor(
+                    remaining /
+                    3600000
+                );
+
+
+            const minutes =
+                Math.floor(
+                    (remaining %
+                        3600000) /
+                    60000
+                );
+
+
+            const statusText =
+                expired
+
+                    ? 'This 12-hour key has expired.'
+
+                    : record.used
+
+                        ? 'This key has already been redeemed on its bound device.'
+
+                        : `Valid for about ${hours}h ${minutes}m.`;
+
+
+            const siteButton =
+                WEBSITE_URL
+
+                    ? `<a href="${escapeHtml(WEBSITE_URL)}" class="site-btn">↩ Open hrry.test</a>`
+
+                    : `<button class="site-btn" onclick="history.back()">↩ Go Back</button>`;
+
+
+            res.setHeader(
+                'Cache-Control',
+                'no-store'
+            );
+
+
+            return res.send(`<!doctype html>
+
+<html lang="en">
+
+<head>
+
+<meta charset="utf-8">
+
+<meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+>
+
+<title>
+    hrry.test • Free Key
+</title>
+
+<style>
+
+*{
+    box-sizing:border-box
+}
+
+body{
+
+    margin:0;
+
+    min-height:100vh;
+
+    display:grid;
+
+    place-items:center;
+
+    background:#07090e;
+
+    color:#f8fafc;
+
+    font-family:
+        system-ui,
+        -apple-system,
+        Segoe UI,
+        sans-serif;
+
+    padding:20px;
+
+}
+
+.box{
+
+    width:min(430px,100%);
+
+    padding:28px;
+
+    border:
+        1px solid
+        rgba(255,255,255,.12);
+
+    border-radius:28px;
+
+    background:
+        rgba(18,24,38,.9);
+
+    box-shadow:
+        0 25px 70px
+        rgba(0,0,0,.45);
+
+    text-align:center;
+
+}
+
+.logo{
+
+    font-size:38px;
+
+}
+
+.title{
+
+    font-size:24px;
+
+    font-weight:900;
+
+    margin:8px 0;
+
+}
+
+.sub{
+
+    color:#94a3b8;
+
+    font-size:13px;
+
+}
+
+.key{
+
+    margin:22px 0;
+
+    padding:18px;
+
+    border-radius:18px;
+
+    background:
+        rgba(99,102,241,.12);
+
+    border:
+        1px solid
+        rgba(129,140,248,.35);
+
+    font-size:23px;
+
+    font-weight:900;
+
+    letter-spacing:1px;
+
+    word-break:break-all;
+
+}
+
+.status{
+
+    font-size:13px;
+
+    color:#cbd5e1;
+
+    margin-bottom:18px;
+
+}
+
+.copy,
+.site-btn{
+
+    display:block;
+
+    width:100%;
+
+    border:0;
+
+    border-radius:14px;
+
+    padding:13px;
+
+    margin-top:10px;
+
+    text-decoration:none;
+
+    font-weight:800;
+
+    font-size:14px;
+
+    cursor:pointer;
+
+}
+
+.copy{
+
+    background:#6366f1;
+
+    color:#fff;
+
+}
+
+.site-btn{
+
+    background:#1f2937;
+
+    color:#fff;
+
+}
+
+</style>
+
+</head>
+
+<body>
+
+<main class="box">
+
+<div class="logo">
+    🎁
+</div>
+
+<div class="title">
+    hrry.test Free Key
+</div>
+
+<div class="sub">
+    12-hour access key
+</div>
+
+<div
+    class="key"
+    id="key"
+>
+    ${escapeHtml(record.key)}
+</div>
+
+<div class="status">
+    ${escapeHtml(statusText)}
+</div>
+
+<button
+    class="copy"
+    onclick="navigator.clipboard?.writeText(document.getElementById('key').innerText).then(()=>this.innerText='✓ Copied')"
+>
+    📋 Copy Key
+</button>
+
+${siteButton}
+
+</main>
+
+</body>
+
+</html>`);
+
+
+        } catch (error) {
+
+            console.error(
+                '/free/:requestId/:secretToken:',
+                error
+            );
+
+            return res
+                .status(500)
+                .send(
+                    '<h2>Server error.</h2>'
+                );
+
+        }
+
+    }
+);
+
+
+/* =========================================
+   REDEEM FREE KEY
+   ONE TIME ONLY
+========================================= */
+
+app.post(
+    '/api/free/redeem',
+    async (req, res) => {
+
+        try {
+
+            if (!requireDatabase(res)) {
+                return;
+            }
+
+
             const deviceId =
-                String(req.body?.deviceId || "")
-                    .trim();
+                normalizeDeviceId(
+                    req.body?.deviceId
+                );
+
+
+            const key =
+                safeKey(
+                    req.body?.key
+                );
+
+
+            if (
+                !deviceId ||
+                !key
+            ) {
+
+                return res.status(400).json({
+
+                    ok: false,
+
+                    error:
+                        'deviceId and key are required.'
+
+                });
+
+            }
+
+
+            const indexSnapshot =
+                await getKeyIndexRef(
+                    key
+                ).get();
+
+
+            const requestId =
+                indexSnapshot.val();
+
+
+            if (!requestId) {
+
+                return res.status(404).json({
+
+                    ok: false,
+
+                    error:
+                        'Invalid free key.'
+
+                });
+
+            }
+
+
+            const ref =
+                getFreeKeyRef(
+                    requestId
+                );
+
+
+            const transactionResult =
+                await ref.transaction(
+                    (record) => {
+
+                        if (!record)
+                            return;
+
+                        if (
+                            record.key !==
+                            key
+                        )
+                            return;
+
+                        if (
+                            record.deviceId !==
+                            deviceId
+                        )
+                            return;
+
+                        if (
+                            record.used ===
+                            true
+                        )
+                            return;
+
+                        if (
+                            Date.now() >=
+                            Number(
+                                record.expiresAt ||
+                                0
+                            )
+                        )
+                            return;
+
+
+                        return {
+
+                            ...record,
+
+                            used:
+                                true,
+
+                            usedAt:
+                                Date.now(),
+
+                            status:
+                                'active'
+
+                        };
+
+                    }
+                );
+
+
+            if (
+                !transactionResult.committed
+            ) {
+
+                const latest =
+                    (
+                        await ref.get()
+                    ).val();
+
+
+                if (!latest) {
+
+                    return res.status(404).json({
+
+                        ok: false,
+
+                        error:
+                            'Invalid free key.'
+
+                    });
+
+                }
+
+
+                if (
+                    latest.deviceId !==
+                    deviceId
+                ) {
+
+                    return res.status(403).json({
+
+                        ok: false,
+
+                        error:
+                            'This key belongs to another device.'
+
+                    });
+
+                }
+
+
+                if (
+                    latest.used ===
+                    true
+                ) {
+
+                    return res.status(409).json({
+
+                        ok: false,
+
+                        error:
+                            'This free key has already been used.'
+
+                    });
+
+                }
+
+
+                if (
+                    Date.now() >=
+                    Number(
+                        latest.expiresAt ||
+                        0
+                    )
+                ) {
+
+                    return res.status(410).json({
+
+                        ok: false,
+
+                        error:
+                            'This free key has expired.'
+
+                    });
+
+                }
+
+
+                return res.status(409).json({
+
+                    ok: false,
+
+                    error:
+                        'Key could not be redeemed. Try again.'
+
+                });
+
+            }
+
+
+            const record =
+                transactionResult
+                    .snapshot
+                    .val();
+
+
+            await getDeviceIndexRef(
+                deviceId
+            ).set(requestId);
+
+
+            return res.json({
+
+                ok: true,
+
+                key:
+                    record.key,
+
+                expiresAt:
+                    record.expiresAt,
+
+                durationHours:
+                    FREE_HOURS
+
+            });
+
+
+        } catch (error) {
+
+            console.error(
+                '/api/free/redeem:',
+                error
+            );
+
+            return res.status(500).json({
+
+                ok: false,
+
+                error:
+                    'Free key redemption failed.'
+
+            });
+
+        }
+
+    }
+);
+
+
+/* =========================================
+   SERVER-SIDE FREE ACCESS STATUS
+========================================= */
+
+app.post(
+    '/api/free/status',
+    async (req, res) => {
+
+        try {
+
+            if (!requireDatabase(res)) {
+                return;
+            }
+
+
+            const deviceId =
+                normalizeDeviceId(
+                    req.body?.deviceId
+                );
 
 
             if (!deviceId) {
 
                 return res.status(400).json({
+
                     ok: false,
-                    error: "deviceId_required"
+
+                    error:
+                        'deviceId is required.'
+
+                });
+
+            }
+
+
+            const deviceIndex =
+                await getDeviceIndexRef(
+                    deviceId
+                ).get();
+
+
+            const requestId =
+                deviceIndex.val();
+
+
+            if (!requestId) {
+
+                return res.json({
+
+                    ok: true,
+
+                    active: false
+
                 });
 
             }
 
 
             const snapshot =
-                await db
-                    .ref(FREE_KEY_PATH)
-                    .orderByChild("deviceId")
-                    .equalTo(deviceId)
-                    .once("value");
+                await getFreeKeyRef(
+                    requestId
+                ).get();
 
 
-            const records =
+            const record =
                 snapshot.val();
 
 
-            if (!records) {
+            if (
+                !record ||
+                record.deviceId !==
+                    deviceId ||
+                record.used !== true
+            ) {
 
                 return res.json({
+
                     ok: true,
+
                     active: false
+
                 });
 
             }
 
 
-            const now =
-                Date.now();
+            const expiresAt =
+                Number(
+                    record.expiresAt || 0
+                );
 
 
-            let activeRecord = null;
-
-
-            for (
-                const id of Object.keys(records)
+            if (
+                Date.now() >=
+                expiresAt
             ) {
 
-                const item =
-                    records[id];
-
-
-                if (
-                    item &&
-                    item.activated === true &&
-                    item.used === true &&
-                    Number(item.expiresAt) > now
-                ) {
-
-                    if (
-                        !activeRecord ||
-                        Number(item.expiresAt) >
-                        Number(activeRecord.expiresAt)
-                    ) {
-
-                        activeRecord = item;
-
-                    }
-
-                }
-
-            }
-
-
-            if (!activeRecord) {
-
                 return res.json({
+
                     ok: true,
-                    active: false
+
+                    active: false,
+
+                    expired: true,
+
+                    expiresAt
+
                 });
 
             }
@@ -929,29 +1284,31 @@ app.post(
 
                 active: true,
 
-                key: activeRecord.key,
+                key:
+                    record.key,
 
-                activatedAt:
-                    activeRecord.activatedAt,
+                expiresAt,
 
-                expiresAt:
-                    activeRecord.expiresAt,
-
-                remainingMs:
-                    Number(activeRecord.expiresAt) - now
+                durationHours:
+                    FREE_HOURS
 
             });
+
 
         } catch (error) {
 
             console.error(
-                "FREE STATUS ERROR:",
+                '/api/free/status:',
                 error
             );
 
             return res.status(500).json({
+
                 ok: false,
-                error: "server_error"
+
+                error:
+                    'Status check failed.'
+
             });
 
         }
@@ -960,16 +1317,27 @@ app.post(
 );
 
 
-// ======================================================
-// START SERVER
-// ======================================================
+/* =========================================
+   START SERVER
+========================================= */
 
 app.listen(
     PORT,
     () => {
 
         console.log(
-            `hrry.test Free Key Backend running on port ${PORT}`
+            `hrry.test Free Key backend listening on port ${PORT}`
+        );
+
+        console.log(
+            `BACKEND_URL: ${BACKEND_URL}`
+        );
+
+        console.log(
+            `WEBSITE_URL: ${
+                WEBSITE_URL ||
+                '(not set)'
+            }`
         );
 
     }
