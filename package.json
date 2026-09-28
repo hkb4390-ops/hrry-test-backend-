@@ -1,13 +1,13 @@
 {
-  "name": "hrry-test-backend",
+  "name": "hrry-test-free-key-backend",
   "version": "1.0.0",
-  "description": "HRRY TEST Free Key Backend",
+  "description": "hrry.test 12-hour free key backend",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "engines": {
-    "node": ">=20 <25"
+    "node": ">=22"
   },
   "dependencies": {
     "cors": "^2.8.5",
