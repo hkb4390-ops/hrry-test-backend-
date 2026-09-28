@@ -1,49 +1,88 @@
 'use strict';
 
 /*
-===========================================================
+============================================================
  HRRY.TEST — FREE KEY BACKEND
- Frontend : https://hrrr-test-free.vercel.app
- Backend  : https://hrry-test-backend.onrender.com
+============================================================
 
- Firebase Realtime Database
- Free Key : 12 Hours
-===========================================================
+ FRONTEND:
+ https://hrrr-test-free.vercel.app
+
+ BACKEND:
+ https://hrry-test-backend.onrender.com
+
+ FIREBASE:
+ Realtime Database
+
+ FREE KEY:
+ 12 Hours
+
+============================================================
 */
+
+
+/* =========================================================
+   MODULES
+========================================================= */
 
 const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
 const admin = require('firebase-admin');
 
-const app = express();
 
 /* =========================================================
-   CONFIG
+   EXPRESS APP
 ========================================================= */
 
-const PORT = Number(process.env.PORT || 10000);
+const app = express();
+
+
+/* =========================================================
+   CONFIGURATION
+========================================================= */
+
+const PORT = Number(
+    process.env.PORT || 10000
+);
+
 
 const BACKEND_URL = (
     process.env.BACKEND_URL ||
     'https://hrry-test-backend.onrender.com'
-).replace(/\/+$/, '');
+)
+    .trim()
+    .replace(/\/+$/, '');
+
 
 const WEBSITE_URL = (
     process.env.WEBSITE_URL ||
     'https://hrrr-test-free.vercel.app'
-).replace(/\/+$/, '');
+)
+    .trim()
+    .replace(/\/+$/, '');
+
 
 const FIREBASE_DB_URL = (
     process.env.FIREBASE_DB_URL ||
     'https://hyuuu-732f9-default-rtdb.firebaseio.com'
-).replace(/\/+$/, '');
+)
+    .trim()
+    .replace(/\/+$/, '');
+
 
 const SHRINKME_API_KEY = (
-    process.env.SHRINKME_API_KEY || ''
+    process.env.SHRINKME_API_KEY ||
+    ''
 ).trim();
 
-const FREE_KEY_DURATION_MS = 12 * 60 * 60 * 1000;
+
+/*
+  12 hours
+*/
+
+const FREE_KEY_DURATION_MS =
+    12 * 60 * 60 * 1000;
 
 
 /* =========================================================
@@ -55,47 +94,80 @@ const allowedOrigins = new Set([
     'https://www.hrrr-test-free.vercel.app'
 ]);
 
+
 function isAllowedOrigin(origin) {
+
+    /*
+      Requests such as direct browser/server requests
+      may not contain an Origin header.
+    */
+
     if (!origin) {
         return true;
     }
+
+
+    /*
+      Main production website
+    */
 
     if (allowedOrigins.has(origin)) {
         return true;
     }
 
+
     /*
-      Allow Vercel preview deployments also.
-      Example:
-      https://hrrr-test-free-git-main-xxxxx.vercel.app
+      Vercel preview deployments
     */
+
     if (
-        /^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/.test(origin)
+        /^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/
+            .test(origin)
     ) {
         return true;
     }
 
+
     return false;
 }
 
+
 app.use(
     cors({
-        origin: function (origin, callback) {
 
-            if (isAllowedOrigin(origin)) {
-                callback(null, true);
+        origin: function (
+            origin,
+            callback
+        ) {
+
+            if (
+                isAllowedOrigin(origin)
+            ) {
+
+                callback(
+                    null,
+                    true
+                );
+
                 return;
             }
 
+
             console.log(
-                '❌ CORS blocked origin:',
-                origin || '(no origin)'
+                '❌ CORS BLOCKED:',
+                origin ||
+                '(no origin)'
             );
 
+
             callback(
-                new Error('Not allowed by CORS')
+                new Error(
+                    'Not allowed by CORS'
+                )
             );
+
         },
+
 
         methods: [
             'GET',
@@ -103,16 +175,26 @@ app.use(
             'OPTIONS'
         ],
 
+
         allowedHeaders: [
             'Content-Type',
             'Authorization'
         ],
 
+
         credentials: false,
 
+
         optionsSuccessStatus: 204
+
     })
 );
+
+
+/*
+  Express cors middleware above also handles
+  normal preflight OPTIONS requests.
+*/
 
 
 /* =========================================================
@@ -125,6 +207,7 @@ app.use(
     })
 );
 
+
 app.use(
     express.urlencoded({
         extended: false,
@@ -134,46 +217,102 @@ app.use(
 
 
 /* =========================================================
-   BASIC HELPERS
+   HELPER FUNCTIONS
 ========================================================= */
 
-function cleanString(value, maxLength = 500) {
-    return String(value || '')
+
+/*
+  Clean string
+*/
+
+function cleanString(
+    value,
+    maxLength = 500
+) {
+
+    return String(
+        value || ''
+    )
         .trim()
-        .slice(0, maxLength);
+        .slice(
+            0,
+            maxLength
+        );
+
 }
 
 
-function normalizeKey(value) {
-    return cleanString(value, 100)
+/*
+  Normalize Free Key
+*/
+
+function normalizeKey(
+    value
+) {
+
+    return cleanString(
+        value,
+        100
+    )
         .toUpperCase()
-        .replace(/\s+/g, '');
+        .replace(
+            /\s+/g,
+            ''
+        );
+
 }
 
 
-function hashDeviceId(deviceId) {
+/*
+  Device ID SHA-256 hash
+*/
+
+function hashDeviceId(
+    deviceId
+) {
+
     return crypto
         .createHash('sha256')
-        .update(String(deviceId))
+        .update(
+            String(deviceId)
+        )
         .digest('hex');
+
 }
 
 
+/*
+  Request ID
+*/
+
 function createRequestId() {
+
     return crypto
         .randomBytes(18)
         .toString('hex');
+
 }
 
 
+/*
+  Secret token
+*/
+
 function createSecretToken() {
+
     return crypto
         .randomBytes(32)
         .toString('hex');
+
 }
 
 
+/*
+  Free Key
+*/
+
 function createFreeKey() {
+
     return (
         'HRRY-FREE-' +
         crypto
@@ -181,45 +320,113 @@ function createFreeKey() {
             .toString('hex')
             .toUpperCase()
     );
+
 }
 
 
-function isExpired(expiresAt) {
-    return Number(expiresAt || 0) <= Date.now();
+/*
+  Expiration check
+*/
+
+function isExpired(
+    expiresAt
+) {
+
+    return (
+        Number(
+            expiresAt || 0
+        ) <= Date.now()
+    );
+
 }
 
+
+/*
+  HTML escape
+*/
+
+function escapeHtml(
+    value
+) {
+
+    return String(
+        value || ''
+    )
+        .replace(
+            /&/g,
+            '&amp;'
+        )
+        .replace(
+            /</g,
+            '&lt;'
+        )
+        .replace(
+            />/g,
+            '&gt;'
+        )
+        .replace(
+            /"/g,
+            '&quot;'
+        )
+        .replace(
+            /'/g,
+            '&#039;'
+        );
+
+}
+
+
+/* =========================================================
+   FIREBASE SERVICE ACCOUNT
+========================================================= */
 
 function getFirebaseServiceAccount() {
 
-    const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+    const raw =
+        process.env.FIREBASE_SERVICE_ACCOUNT;
+
 
     if (!raw) {
+
         throw new Error(
             'FIREBASE_SERVICE_ACCOUNT environment variable is missing.'
         );
+
     }
+
 
     let serviceAccount;
 
+
     try {
-        serviceAccount = JSON.parse(raw);
+
+        serviceAccount =
+            JSON.parse(raw);
+
     } catch (error) {
+
         throw new Error(
             'FIREBASE_SERVICE_ACCOUNT contains invalid JSON.'
         );
+
     }
+
 
     if (
         !serviceAccount.project_id ||
         !serviceAccount.client_email ||
         !serviceAccount.private_key
     ) {
+
         throw new Error(
             'FIREBASE_SERVICE_ACCOUNT JSON is incomplete.'
         );
+
     }
 
+
     return serviceAccount;
+
 }
 
 
@@ -228,53 +435,91 @@ function getFirebaseServiceAccount() {
 ========================================================= */
 
 let db = null;
+
 let firebaseReady = false;
+
 
 try {
 
     const serviceAccount =
         getFirebaseServiceAccount();
 
-    if (!admin.apps.length) {
+
+    if (
+        !admin.apps.length
+    ) {
 
         admin.initializeApp({
+
             credential:
-                admin.credential.cert(serviceAccount),
+                admin.credential.cert(
+                    serviceAccount
+                ),
 
             databaseURL:
                 FIREBASE_DB_URL
+
         });
 
     }
 
-    db = admin.database();
+
+    db =
+        admin.database();
+
 
     firebaseReady = true;
 
+
+    console.log('');
     console.log(
-        '✅ Firebase Admin connected successfully'
+        '========================================'
     );
 
     console.log(
-        '✅ Firebase project:',
+        '✅ FIREBASE CONNECTED'
+    );
+
+    console.log(
+        'Project:',
         serviceAccount.project_id
     );
 
     console.log(
-        '✅ Firebase database:',
+        'Database:',
         FIREBASE_DB_URL
     );
+
+    console.log(
+        '========================================'
+    );
+    console.log('');
+
 
 } catch (error) {
 
     firebaseReady = false;
+
     db = null;
 
+
+    console.error('');
     console.error(
-        '❌ Firebase initialization failed:'
+        '========================================'
     );
 
-    console.error(error.message);
+    console.error(
+        '❌ FIREBASE INITIALIZATION FAILED'
+    );
+
+    console.error(
+        error.message
+    );
+
+    console.error(
+        '========================================'
+    );
+    console.error('');
 
 }
 
@@ -285,7 +530,10 @@ try {
 
 function ensureDatabase() {
 
-    if (!firebaseReady || !db) {
+    if (
+        !firebaseReady ||
+        !db
+    ) {
 
         throw new Error(
             'Firebase database is not initialized.'
@@ -293,7 +541,9 @@ function ensureDatabase() {
 
     }
 
+
     return db;
+
 }
 
 
@@ -301,321 +551,74 @@ function ensureDatabase() {
    ROOT
 ========================================================= */
 
-app.get('/', (req, res) => {
+app.get(
+    '/',
+    (req, res) => {
 
-    res.status(200).json({
-        ok: true,
-        service: 'hrry.test Free Key Backend',
-        frontend: WEBSITE_URL,
-        firebase: firebaseReady,
-        time: new Date().toISOString()
-    });
+        res.status(200).json({
 
-});
+            ok: true,
+
+            service:
+                'HRRY.TEST Free Key Backend',
+
+            frontend:
+                WEBSITE_URL,
+
+            backend:
+                BACKEND_URL,
+
+            firebase:
+                firebaseReady,
+
+            time:
+                new Date().toISOString()
+
+        });
+
+    }
+);
 
 
 /* =========================================================
    HEALTH
 ========================================================= */
 
-app.get('/health', (req, res) => {
+app.get(
+    '/health',
+    (req, res) => {
 
-    res.status(200).json({
-        ok: true,
-        firebase: firebaseReady,
-        time: new Date().toISOString()
-    });
+        res.status(200).json({
 
-});
+            ok: true,
+
+            firebase:
+                firebaseReady,
+
+            time:
+                new Date().toISOString()
+
+        });
+
+    }
+);
 
 
 /* =========================================================
    START FREE KEY
 ========================================================= */
 
-app.post('/api/free/start', async (req, res) => {
+app.post(
+    '/api/free/start',
+    async (req, res) => {
 
-    console.log('\n========================================');
-    console.log('➡️ POST /api/free/start');
-    console.log('========================================');
-
-    try {
-
-        const database = ensureDatabase();
-
-        const deviceId =
-            cleanString(req.body?.deviceId, 300);
-
+        console.log('');
         console.log(
-            '📱 deviceId received:',
-            deviceId
-                ? `${deviceId.slice(0, 12)}...`
-                : '(missing)'
-        );
-
-        if (!deviceId) {
-
-            console.log(
-                '❌ start rejected: deviceId missing'
-            );
-
-            return res.status(400).json({
-                ok: false,
-                error: 'deviceId is required.'
-            });
-
-        }
-
-
-        if (!SHRINKME_API_KEY) {
-
-            console.log(
-                '❌ start rejected: SHRINKME_API_KEY missing'
-            );
-
-            return res.status(500).json({
-                ok: false,
-                error:
-                    'ShrinkMe API key is not configured on server.'
-            });
-
-        }
-
-
-        const now = Date.now();
-
-        const requestId =
-            createRequestId();
-
-        const secretToken =
-            createSecretToken();
-
-        const key =
-            createFreeKey();
-
-        const expiresAt =
-            now + FREE_KEY_DURATION_MS;
-
-        const deviceIdHash =
-            hashDeviceId(deviceId);
-
-
-        /*
-          Important:
-          ShrinkMe destination points to backend,
-          not directly to Vercel.
-        */
-
-        const destinationUrl =
-            `${BACKEND_URL}/free/${encodeURIComponent(requestId)}/${encodeURIComponent(secretToken)}`;
-
-
-        const record = {
-
-            key,
-
-            deviceIdHash,
-
-            secretToken,
-
-            requestId,
-
-            createdAt: now,
-
-            expiresAt,
-
-            used: false,
-
-            usedAt: null,
-
-            redeemedAt: null,
-
-            status: 'creating',
-
-            shrinkmeUrl: '',
-
-            destinationUrl,
-
-            type: 'free',
-
-            durationHours: 12
-
-        };
-
-
-        console.log(
-            '🆕 New Free Key:',
-            key
+            '========================================'
         );
 
         console.log(
-            '🆔 requestId:',
-            requestId
-        );
-
-        console.log(
-            '⏰ expiresAt:',
-            new Date(expiresAt).toISOString()
-        );
-
-
-        /*
-          Save main record
-        */
-
-        await database
-            .ref(`hrry_free_keys/${requestId}`)
-            .set(record);
-
-
-        /*
-          Key index
-        */
-
-        await database
-            .ref(`hrry_free_key_index/${key}`)
-            .set(requestId);
-
-
-        /*
-          Device index.
-          Store request ID under device hash.
-          This avoids overwriting the entire device node.
-        */
-
-        await database
-            .ref(
-                `hrry_free_device_index/${deviceIdHash}/${requestId}`
-            )
-            .set(true);
-
-
-        console.log(
-            '✅ Free Key record saved to Firebase'
-        );
-
-
-        /*
-          Create ShrinkMe URL
-        */
-
-        const shrinkUrl =
-            'https://shrinkme.io/api?' +
-            'api=' +
-            encodeURIComponent(SHRINKME_API_KEY) +
-            '&url=' +
-            encodeURIComponent(destinationUrl);
-
-
-        console.log(
-            '🌐 Calling ShrinkMe API...'
-        );
-
-
-        const shrinkResponse =
-            await fetch(shrinkUrl, {
-                method: 'GET',
-                headers: {
-                    'Accept': 'application/json'
-                }
-            });
-
-
-        const shrinkText =
-            await shrinkResponse.text();
-
-
-        let shrinkData = {};
-
-        try {
-            shrinkData =
-                JSON.parse(shrinkText);
-        } catch (error) {
-
-            console.error(
-                '❌ ShrinkMe returned non-JSON:',
-                shrinkText.slice(0, 500)
-            );
-
-            throw new Error(
-                'ShrinkMe returned invalid response.'
-            );
-
-        }
-
-
-        console.log(
-            'ShrinkMe status:',
-            shrinkData.status
-        );
-
-
-        if (
-            !shrinkResponse.ok ||
-            shrinkData.status !== 'success' ||
-            !shrinkData.shortenedUrl
-        ) {
-
-            console.error(
-                '❌ ShrinkMe failed:',
-                shrinkData
-            );
-
-            /*
-              Remove incomplete record
-            */
-
-            await Promise.allSettled([
-
-                database
-                    .ref(`hrry_free_keys/${requestId}`)
-                    .remove(),
-
-                database
-                    .ref(`hrry_free_key_index/${key}`)
-                    .remove(),
-
-                database
-                    .ref(
-                        `hrry_free_device_index/${deviceIdHash}/${requestId}`
-                    )
-                    .remove()
-
-            ]);
-
-            return res.status(502).json({
-                ok: false,
-                error:
-                    'ShrinkMe link नहीं बन पाया।'
-            });
-
-        }
-
-
-        const shrinkmeUrl =
-            String(
-                shrinkData.shortenedUrl
-            ).trim();
-
-
-        /*
-          Update record as ready
-        */
-
-        await database
-            .ref(`hrry_free_keys/${requestId}`)
-            .update({
-
-                shrinkmeUrl,
-
-                status: 'ready'
-
-            });
-
-
-        console.log(
-            '✅ ShrinkMe URL created:',
-            shrinkmeUrl
+            '➡️ POST /api/free/start'
         );
 
         console.log(
@@ -623,69 +626,475 @@ app.post('/api/free/start', async (req, res) => {
         );
 
 
-        return res.status(200).json({
+        try {
 
-            ok: true,
-
-            requestId,
-
-            key,
-
-            shrinkmeUrl,
-
-            expiresAt,
-
-            durationHours: 12
-
-        });
+            const database =
+                ensureDatabase();
 
 
-    } catch (error) {
-
-        console.error(
-            '❌ /api/free/start ERROR:'
-        );
-
-        console.error(error);
+            const deviceId =
+                cleanString(
+                    req.body?.deviceId,
+                    300
+                );
 
 
-        return res.status(500).json({
+            console.log(
+                '📱 deviceId received:',
+                deviceId
+                    ? deviceId.slice(0, 12) + '...'
+                    : '(missing)'
+            );
 
-            ok: false,
 
-            error:
-                error.message ||
-                'Free Key start failed.'
+            if (!deviceId) {
 
-        });
+                console.log(
+                    '❌ deviceId missing'
+                );
+
+
+                return res
+                    .status(400)
+                    .json({
+
+                        ok: false,
+
+                        error:
+                            'deviceId is required.'
+
+                    });
+
+            }
+
+
+            if (!SHRINKME_API_KEY) {
+
+                console.log(
+                    '❌ SHRINKME_API_KEY missing'
+                );
+
+
+                return res
+                    .status(500)
+                    .json({
+
+                        ok: false,
+
+                        error:
+                            'ShrinkMe API key is not configured on server.'
+
+                    });
+
+            }
+
+
+            /*
+              Time
+            */
+
+            const now =
+                Date.now();
+
+
+            /*
+              Generate values
+            */
+
+            const requestId =
+                createRequestId();
+
+
+            const secretToken =
+                createSecretToken();
+
+
+            const key =
+                createFreeKey();
+
+
+            const expiresAt =
+                now +
+                FREE_KEY_DURATION_MS;
+
+
+            const deviceIdHash =
+                hashDeviceId(
+                    deviceId
+                );
+
+
+            /*
+              Destination page
+            */
+
+            const destinationUrl =
+                `${BACKEND_URL}/free/${encodeURIComponent(requestId)}/${encodeURIComponent(secretToken)}`;
+
+
+            /*
+              Database record
+            */
+
+            const record = {
+
+                key,
+
+                requestId,
+
+                secretToken,
+
+                deviceIdHash,
+
+                createdAt:
+                    now,
+
+                expiresAt,
+
+                used: false,
+
+                usedAt: null,
+
+                redeemedAt: null,
+
+                status:
+                    'creating',
+
+                shrinkmeUrl:
+                    '',
+
+                destinationUrl,
+
+                type:
+                    'free',
+
+                durationHours:
+                    12
+
+            };
+
+
+            console.log(
+                '🆕 New Free Key:',
+                key
+            );
+
+            console.log(
+                '🆔 requestId:',
+                requestId
+            );
+
+            console.log(
+                '⏰ expiresAt:',
+                new Date(
+                    expiresAt
+                ).toISOString()
+            );
+
+
+            /*
+              Save main record
+            */
+
+            await database
+                .ref(
+                    `hrry_free_keys/${requestId}`
+                )
+                .set(
+                    record
+                );
+
+
+            /*
+              Key → request ID
+            */
+
+            await database
+                .ref(
+                    `hrry_free_key_index/${key}`
+                )
+                .set(
+                    requestId
+                );
+
+
+            /*
+              Device → request ID
+            */
+
+            await database
+                .ref(
+                    `hrry_free_device_index/${deviceIdHash}/${requestId}`
+                )
+                .set(true);
+
+
+            console.log(
+                '✅ Free Key saved to Firebase'
+            );
+
+
+            /*
+              ShrinkMe API
+            */
+
+            const shrinkUrl =
+                'https://shrinkme.io/api?' +
+                'api=' +
+                encodeURIComponent(
+                    SHRINKME_API_KEY
+                ) +
+                '&url=' +
+                encodeURIComponent(
+                    destinationUrl
+                );
+
+
+            console.log(
+                '🌐 Calling ShrinkMe API...'
+            );
+
+
+            const shrinkResponse =
+                await fetch(
+                    shrinkUrl,
+                    {
+
+                        method:
+                            'GET',
+
+                        headers: {
+
+                            Accept:
+                                'application/json'
+
+                        }
+
+                    }
+                );
+
+
+            const shrinkText =
+                await shrinkResponse.text();
+
+
+            let shrinkData = {};
+
+
+            try {
+
+                shrinkData =
+                    JSON.parse(
+                        shrinkText
+                    );
+
+            } catch (error) {
+
+                console.error(
+                    '❌ ShrinkMe returned invalid JSON:'
+                );
+
+                console.error(
+                    shrinkText.slice(
+                        0,
+                        500
+                    )
+                );
+
+
+                throw new Error(
+                    'ShrinkMe returned invalid response.'
+                );
+
+            }
+
+
+            console.log(
+                'ShrinkMe response status:',
+                shrinkResponse.status
+            );
+
+            console.log(
+                'ShrinkMe API status:',
+                shrinkData.status
+            );
+
+
+            if (
+                !shrinkResponse.ok ||
+                shrinkData.status !==
+                    'success' ||
+                !shrinkData.shortenedUrl
+            ) {
+
+                console.error(
+                    '❌ ShrinkMe failed:',
+                    shrinkData
+                );
+
+
+                /*
+                  Remove incomplete records
+                */
+
+                await Promise.allSettled([
+
+                    database
+                        .ref(
+                            `hrry_free_keys/${requestId}`
+                        )
+                        .remove(),
+
+                    database
+                        .ref(
+                            `hrry_free_key_index/${key}`
+                        )
+                        .remove(),
+
+                    database
+                        .ref(
+                            `hrry_free_device_index/${deviceIdHash}/${requestId}`
+                        )
+                        .remove()
+
+                ]);
+
+
+                return res
+                    .status(502)
+                    .json({
+
+                        ok: false,
+
+                        error:
+                            'ShrinkMe link नहीं बन पाया।'
+
+                    });
+
+            }
+
+
+            const shrinkmeUrl =
+                String(
+                    shrinkData.shortenedUrl
+                ).trim();
+
+
+            /*
+              Mark ready
+            */
+
+            await database
+                .ref(
+                    `hrry_free_keys/${requestId}`
+                )
+                .update({
+
+                    shrinkmeUrl,
+
+                    status:
+                        'ready'
+
+                });
+
+
+            console.log(
+                '✅ ShrinkMe URL:',
+                shrinkmeUrl
+            );
+
+
+            console.log(
+                '========================================'
+            );
+
+
+            return res
+                .status(200)
+                .json({
+
+                    ok: true,
+
+                    requestId,
+
+                    key,
+
+                    shrinkmeUrl,
+
+                    expiresAt,
+
+                    durationHours:
+                        12
+
+                });
+
+
+        } catch (error) {
+
+            console.error('');
+            console.error(
+                '❌ /api/free/start ERROR'
+            );
+
+            console.error(
+                error
+            );
+
+            console.error('');
+
+
+            return res
+                .status(500)
+                .json({
+
+                    ok: false,
+
+                    error:
+                        error.message ||
+                        'Free Key start failed.'
+
+                });
+
+        }
 
     }
-
-});
+);
 
 
 /* =========================================================
-   FREE KEY LANDING PAGE
+   FREE KEY PAGE
 ========================================================= */
 
 app.get(
     '/free/:requestId/:secretToken',
     async (req, res) => {
 
-        console.log('\n========================================');
-        console.log('➡️ GET /free/:requestId/:secretToken');
-        console.log('========================================');
+        console.log('');
+        console.log(
+            '========================================'
+        );
+
+        console.log(
+            '➡️ GET /free/:requestId/:secretToken'
+        );
+
+        console.log(
+            '========================================'
+        );
+
 
         try {
 
             const database =
                 ensureDatabase();
 
+
             const requestId =
                 cleanString(
                     req.params.requestId,
                     200
                 );
+
 
             const secretToken =
                 cleanString(
@@ -705,7 +1114,9 @@ app.get(
                     .ref(
                         `hrry_free_keys/${requestId}`
                     )
-                    .once('value');
+                    .once(
+                        'value'
+                    );
 
 
             const record =
@@ -714,85 +1125,112 @@ app.get(
 
             if (!record) {
 
-                return res.status(404).send(
-                    renderMessagePage(
-                        '❌ Link Invalid',
-                        'यह Free Key link मौजूद नहीं है।'
-                    )
-                );
+                return res
+                    .status(404)
+                    .send(
+                        renderMessagePage(
+                            '❌ Link Invalid',
+                            'यह Free Key link मौजूद नहीं है।'
+                        )
+                    );
 
             }
 
 
             if (
-                String(record.secretToken) !==
-                String(secretToken)
+                String(
+                    record.secretToken
+                ) !==
+                String(
+                    secretToken
+                )
             ) {
 
-                return res.status(403).send(
-                    renderMessagePage(
-                        '❌ Invalid Link',
-                        'यह link valid नहीं है।'
-                    )
-                );
+                return res
+                    .status(403)
+                    .send(
+                        renderMessagePage(
+                            '❌ Invalid Link',
+                            'यह link valid नहीं है।'
+                        )
+                    );
 
             }
 
 
-            if (isExpired(record.expiresAt)) {
+            if (
+                isExpired(
+                    record.expiresAt
+                )
+            ) {
 
-                return res.status(410).send(
-                    renderMessagePage(
-                        '⏰ Key Expired',
-                        'यह Free Key 12 घंटे के बाद expire हो चुकी है।'
-                    )
-                );
+                return res
+                    .status(410)
+                    .send(
+                        renderMessagePage(
+                            '⏰ Key Expired',
+                            'यह Free Key 12 घंटे के बाद expire हो चुकी है।'
+                        )
+                    );
 
             }
 
 
-            if (record.used === true) {
+            if (
+                record.used === true
+            ) {
 
-                return res.status(409).send(
-                    renderMessagePage(
-                        '🔒 Key Already Redeemed',
-                        'यह Free Key पहले ही redeem हो चुकी है।'
-                    )
-                );
+                return res
+                    .status(409)
+                    .send(
+                        renderMessagePage(
+                            '🔒 Key Already Redeemed',
+                            'यह Free Key पहले ही redeem हो चुकी है।'
+                        )
+                    );
 
             }
 
 
             if (!record.key) {
 
-                return res.status(500).send(
-                    renderMessagePage(
-                        '❌ Key Error',
-                        'Key उपलब्ध नहीं है।'
-                    )
-                );
+                return res
+                    .status(500)
+                    .send(
+                        renderMessagePage(
+                            '❌ Key Error',
+                            'Free Key उपलब्ध नहीं है।'
+                        )
+                    );
 
             }
 
 
-            return res.status(200).send(
-                renderFreeKeyPage(record)
-            );
+            return res
+                .status(200)
+                .send(
+                    renderFreeKeyPage(
+                        record
+                    )
+                );
 
 
         } catch (error) {
 
             console.error(
-                '❌ /free landing ERROR:',
+                '❌ /free page ERROR:',
                 error
             );
 
-            return res.status(500).send(
-                renderMessagePage(
-                    '❌ Server Error',
-                    'Free Key page अभी उपलब्ध नहीं है।'
-                )
-            );
+
+            return res
+                .status(500)
+                .send(
+                    renderMessagePage(
+                        '❌ Server Error',
+                        'Free Key page अभी उपलब्ध नहीं है।'
+                    )
+                );
 
         }
 
@@ -804,454 +1242,17 @@ app.get(
    REDEEM FREE KEY
 ========================================================= */
 
-app.post('/api/free/redeem', async (req, res) => {
+app.post(
+    '/api/free/redeem',
+    async (req, res) => {
 
-    console.log('\n========================================');
-    console.log('➡️ POST /api/free/redeem');
-    console.log('========================================');
-
-    try {
-
-        const database =
-            ensureDatabase();
-
-
-        const key =
-            normalizeKey(
-                req.body?.key
-            );
-
-        const deviceId =
-            cleanString(
-                req.body?.deviceId,
-                300
-            );
-
-
+        console.log('');
         console.log(
-            '🔑 key received:',
-            key || '(missing)'
+            '========================================'
         );
 
         console.log(
-            '📱 deviceId received:',
-            deviceId
-                ? `${deviceId.slice(0, 12)}...`
-                : '(missing)'
-        );
-
-
-        if (!key) {
-
-            console.log(
-                '❌ redeem rejected: key missing'
-            );
-
-            return res.status(400).json({
-
-                ok: false,
-
-                error:
-                    'Free Key नहीं मिली।'
-
-            });
-
-        }
-
-
-        if (!deviceId) {
-
-            console.log(
-                '❌ redeem rejected: deviceId missing'
-            );
-
-            return res.status(400).json({
-
-                ok: false,
-
-                error:
-                    'Device ID नहीं मिली।'
-
-            });
-
-        }
-
-
-        if (
-            !key.startsWith('HRRY-FREE-')
-        ) {
-
-            console.log(
-                '❌ redeem rejected: invalid key format'
-            );
-
-            return res.status(400).json({
-
-                ok: false,
-
-                error:
-                    'यह Free Key format valid नहीं है।'
-
-            });
-
-        }
-
-
-        const deviceIdHash =
-            hashDeviceId(deviceId);
-
-
-        /*
-          First find requestId from key index.
-        */
-
-        const indexSnapshot =
-            await database
-                .ref(
-                    `hrry_free_key_index/${key}`
-                )
-                .once('value');
-
-
-        const requestId =
-            indexSnapshot.val();
-
-
-        console.log(
-            '🆔 requestId from key index:',
-            requestId || '(not found)'
-        );
-
-
-        if (!requestId) {
-
-            console.log(
-                '❌ redeem rejected: key not found'
-            );
-
-            return res.status(404).json({
-
-                ok: false,
-
-                error:
-                    'यह Free Key valid नहीं है।'
-
-            });
-
-        }
-
-
-        const keyRef =
-            database.ref(
-                `hrry_free_keys/${requestId}`
-            );
-
-
-        /*
-          Read current record first.
-          This gives a useful exact error instead
-          of one generic transaction error.
-        */
-
-        const beforeSnapshot =
-            await keyRef.once('value');
-
-
-        const beforeRecord =
-            beforeSnapshot.val();
-
-
-        if (!beforeRecord) {
-
-            console.log(
-                '❌ redeem rejected: database record missing'
-            );
-
-            return res.status(404).json({
-
-                ok: false,
-
-                error:
-                    'Free Key का database record नहीं मिला।'
-
-            });
-
-        }
-
-
-        /*
-          Device check
-        */
-
-        if (
-            String(beforeRecord.deviceIdHash || '') !==
-            String(deviceIdHash)
-        ) {
-
-            console.log(
-                '❌ DEVICE MISMATCH'
-            );
-
-            console.log(
-                'Stored device hash:',
-                String(
-                    beforeRecord.deviceIdHash || ''
-                ).slice(0, 12) + '...'
-            );
-
-            console.log(
-                'Received device hash:',
-                String(
-                    deviceIdHash
-                ).slice(0, 12) + '...'
-            );
-
-
-            return res.status(403).json({
-
-                ok: false,
-
-                error:
-                    'यह Free Key दूसरे device से linked है। उसी device/browser से redeem करें जिससे key बनाई गई थी।'
-
-            });
-
-        }
-
-
-        /*
-          Expiration
-        */
-
-        if (
-            isExpired(
-                beforeRecord.expiresAt
-            )
-        ) {
-
-            console.log(
-                '❌ redeem rejected: expired'
-            );
-
-            return res.status(410).json({
-
-                ok: false,
-
-                error:
-                    'यह Free Key expire हो चुकी है।'
-
-            });
-
-        }
-
-
-        /*
-          Already redeemed
-        */
-
-        if (
-            beforeRecord.used === true
-        ) {
-
-            console.log(
-                '❌ redeem rejected: already used'
-            );
-
-            return res.status(409).json({
-
-                ok: false,
-
-                error:
-                    'Free Key पहले ही redeem हो चुकी है।'
-
-            });
-
-        }
-
-
-        /*
-          Atomic transaction.
-          This prevents two simultaneous requests
-          from redeeming the same key.
-        */
-
-        const redeemedAt =
-            Date.now();
-
-
-        const transactionResult =
-            await keyRef.transaction(
-                current => {
-
-                    if (!current) {
-                        return;
-                    }
-
-                    if (
-                        current.used === true
-                    ) {
-                        return;
-                    }
-
-                    if (
-                        String(
-                            current.deviceIdHash || ''
-                        ) !==
-                        String(deviceIdHash)
-                    ) {
-                        return;
-                    }
-
-                    if (
-                        Number(
-                            current.expiresAt || 0
-                        ) <= Date.now()
-                    ) {
-                        return;
-                    }
-
-
-                    return {
-
-                        ...current,
-
-                        used: true,
-
-                        usedAt: redeemedAt,
-
-                        redeemedAt: redeemedAt,
-
-                        /*
-                          IMPORTANT:
-                          status remains active because
-                          access continues until expiresAt.
-                        */
-
-                        status: 'active'
-
-                    };
-
-                }
-            );
-
-
-        if (
-            !transactionResult.committed
-        ) {
-
-            console.log(
-                '❌ transaction not committed'
-            );
-
-
-            /*
-              Re-read record to give exact reason.
-            */
-
-            const latestSnapshot =
-                await keyRef.once('value');
-
-            const latest =
-                latestSnapshot.val();
-
-
-            if (!latest) {
-
-                return res.status(404).json({
-
-                    ok: false,
-
-                    error:
-                        'Free Key record नहीं मिला।'
-
-                });
-
-            }
-
-
-            if (
-                String(
-                    latest.deviceIdHash || ''
-                ) !==
-                String(deviceIdHash)
-            ) {
-
-                return res.status(403).json({
-
-                    ok: false,
-
-                    error:
-                        'यह Free Key दूसरे device से linked है।'
-
-                });
-
-            }
-
-
-            if (
-                isExpired(
-                    latest.expiresAt
-                )
-            ) {
-
-                return res.status(410).json({
-
-                    ok: false,
-
-                    error:
-                        'यह Free Key expire हो चुकी है।'
-
-                });
-
-            }
-
-
-            if (
-                latest.used === true
-            ) {
-
-                return res.status(409).json({
-
-                    ok: false,
-
-                    error:
-                        'Free Key पहले ही redeem हो चुकी है।'
-
-                });
-
-            }
-
-
-            return res.status(409).json({
-
-                ok: false,
-
-                error:
-                    'Free Key redeem नहीं हो सकी। दोबारा कोशिश करें।'
-
-            });
-
-        }
-
-
-        const finalRecord =
-            transactionResult.snapshot.val();
-
-
-        console.log(
-            '✅ FREE KEY REDEEMED SUCCESSFULLY'
-        );
-
-        console.log(
-            '🔑 key:',
-            key
-        );
-
-        console.log(
-            '⏰ expires:',
-            new Date(
-                finalRecord.expiresAt
-            ).toISOString()
+            '➡️ POST /api/free/redeem'
         );
 
         console.log(
@@ -1259,310 +1260,965 @@ app.post('/api/free/redeem', async (req, res) => {
         );
 
 
-        return res.status(200).json({
+        try {
 
-            ok: true,
+            const database =
+                ensureDatabase();
 
-            key: finalRecord.key,
 
-            expiresAt:
-                Number(
+            const key =
+                normalizeKey(
+                    req.body?.key
+                );
+
+
+            const deviceId =
+                cleanString(
+                    req.body?.deviceId,
+                    300
+                );
+
+
+            console.log(
+                '🔑 key received:',
+                key ||
+                '(missing)'
+            );
+
+
+            console.log(
+                '📱 deviceId received:',
+                deviceId
+                    ? deviceId.slice(0, 12) + '...'
+                    : '(missing)'
+            );
+
+
+            /*
+              Key missing
+            */
+
+            if (!key) {
+
+                console.log(
+                    '❌ key missing'
+                );
+
+
+                return res
+                    .status(400)
+                    .json({
+
+                        ok: false,
+
+                        error:
+                            'Free Key नहीं मिली।'
+
+                    });
+
+            }
+
+
+            /*
+              Device missing
+            */
+
+            if (!deviceId) {
+
+                console.log(
+                    '❌ deviceId missing'
+                );
+
+
+                return res
+                    .status(400)
+                    .json({
+
+                        ok: false,
+
+                        error:
+                            'Device ID नहीं मिली।'
+
+                    });
+
+            }
+
+
+            /*
+              Key format
+            */
+
+            if (
+                !key.startsWith(
+                    'HRRY-FREE-'
+                )
+            ) {
+
+                console.log(
+                    '❌ invalid key format'
+                );
+
+
+                return res
+                    .status(400)
+                    .json({
+
+                        ok: false,
+
+                        error:
+                            'यह Free Key format valid नहीं है।'
+
+                    });
+
+            }
+
+
+            /*
+              Device hash
+            */
+
+            const deviceIdHash =
+                hashDeviceId(
+                    deviceId
+                );
+
+
+            /*
+              Find request ID
+            */
+
+            const indexSnapshot =
+                await database
+                    .ref(
+                        `hrry_free_key_index/${key}`
+                    )
+                    .once(
+                        'value'
+                    );
+
+
+            const requestId =
+                indexSnapshot.val();
+
+
+            console.log(
+                '🆔 requestId:',
+                requestId ||
+                '(not found)'
+            );
+
+
+            /*
+              Key does not exist
+            */
+
+            if (!requestId) {
+
+                console.log(
+                    '❌ key not found'
+                );
+
+
+                return res
+                    .status(404)
+                    .json({
+
+                        ok: false,
+
+                        error:
+                            'यह Free Key valid नहीं है।'
+
+                    });
+
+            }
+
+
+            const keyRef =
+                database.ref(
+                    `hrry_free_keys/${requestId}`
+                );
+
+
+            /*
+              Read record
+            */
+
+            const beforeSnapshot =
+                await keyRef.once(
+                    'value'
+                );
+
+
+            const beforeRecord =
+                beforeSnapshot.val();
+
+
+            if (!beforeRecord) {
+
+                console.log(
+                    '❌ Firebase record missing'
+                );
+
+
+                return res
+                    .status(404)
+                    .json({
+
+                        ok: false,
+
+                        error:
+                            'Free Key का database record नहीं मिला।'
+
+                    });
+
+            }
+
+
+            /*
+              Check device
+            */
+
+            if (
+                String(
+                    beforeRecord.deviceIdHash ||
+                    ''
+                ) !==
+                String(
+                    deviceIdHash
+                )
+            ) {
+
+                console.log(
+                    '❌ DEVICE MISMATCH'
+                );
+
+
+                console.log(
+                    'Stored hash:',
+                    String(
+                        beforeRecord.deviceIdHash ||
+                        ''
+                    ).slice(
+                        0,
+                        12
+                    ) + '...'
+                );
+
+
+                console.log(
+                    'Received hash:',
+                    String(
+                        deviceIdHash
+                    ).slice(
+                        0,
+                        12
+                    ) + '...'
+                );
+
+
+                return res
+                    .status(403)
+                    .json({
+
+                        ok: false,
+
+                        error:
+                            'यह Free Key दूसरे device से linked है। उसी device/browser से redeem करें जिससे key बनाई गई थी।'
+
+                    });
+
+            }
+
+
+            /*
+              Check expiry
+            */
+
+            if (
+                isExpired(
+                    beforeRecord.expiresAt
+                )
+            ) {
+
+                console.log(
+                    '❌ key expired'
+                );
+
+
+                return res
+                    .status(410)
+                    .json({
+
+                        ok: false,
+
+                        error:
+                            'यह Free Key expire हो चुकी है।'
+
+                    });
+
+            }
+
+
+            /*
+              Already redeemed
+            */
+
+            if (
+                beforeRecord.used === true
+            ) {
+
+                console.log(
+                    '❌ key already redeemed'
+                );
+
+
+                return res
+                    .status(409)
+                    .json({
+
+                        ok: false,
+
+                        error:
+                            'Free Key पहले ही redeem हो चुकी है।'
+
+                    });
+
+            }
+
+
+            /*
+              Atomic Firebase transaction
+            */
+
+            const redeemedAt =
+                Date.now();
+
+
+            const transactionResult =
+                await keyRef.transaction(
+                    function (
+                        current
+                    ) {
+
+                        if (!current) {
+                            return;
+                        }
+
+
+                        if (
+                            current.used === true
+                        ) {
+                            return;
+                        }
+
+
+                        if (
+                            String(
+                                current.deviceIdHash ||
+                                ''
+                            ) !==
+                            String(
+                                deviceIdHash
+                            )
+                        ) {
+                            return;
+                        }
+
+
+                        if (
+                            Number(
+                                current.expiresAt ||
+                                0
+                            ) <=
+                            Date.now()
+                        ) {
+                            return;
+                        }
+
+
+                        /*
+                          Redeemed but still active
+                          until expiresAt.
+                        */
+
+                        return {
+
+                            ...current,
+
+                            used:
+                                true,
+
+                            usedAt:
+                                redeemedAt,
+
+                            redeemedAt:
+                                redeemedAt,
+
+                            status:
+                                'active'
+
+                        };
+
+                    }
+                );
+
+
+            /*
+              Transaction failed
+            */
+
+            if (
+                !transactionResult.committed
+            ) {
+
+                console.log(
+                    '❌ Firebase transaction NOT committed'
+                );
+
+
+                /*
+                  Read latest record
+                */
+
+                const latestSnapshot =
+                    await keyRef.once(
+                        'value'
+                    );
+
+
+                const latest =
+                    latestSnapshot.val();
+
+
+                if (!latest) {
+
+                    return res
+                        .status(404)
+                        .json({
+
+                            ok: false,
+
+                            error:
+                                'Free Key record नहीं मिला।'
+
+                        });
+
+                }
+
+
+                if (
+                    String(
+                        latest.deviceIdHash ||
+                        ''
+                    ) !==
+                    String(
+                        deviceIdHash
+                    )
+                ) {
+
+                    return res
+                        .status(403)
+                        .json({
+
+                            ok: false,
+
+                            error:
+                                'यह Free Key दूसरे device से linked है।'
+
+                        });
+
+                }
+
+
+                if (
+                    isExpired(
+                        latest.expiresAt
+                    )
+                ) {
+
+                    return res
+                        .status(410)
+                        .json({
+
+                            ok: false,
+
+                            error:
+                                'यह Free Key expire हो चुकी है।'
+
+                        });
+
+                }
+
+
+                if (
+                    latest.used === true
+                ) {
+
+                    return res
+                        .status(409)
+                        .json({
+
+                            ok: false,
+
+                            error:
+                                'Free Key पहले ही redeem हो चुकी है।'
+
+                        });
+
+                }
+
+
+                return res
+                    .status(409)
+                    .json({
+
+                        ok: false,
+
+                        error:
+                            'Free Key redeem नहीं हो सकी। दोबारा कोशिश करें।'
+
+                    });
+
+            }
+
+
+            /*
+              Final snapshot
+            */
+
+            const finalRecord =
+                transactionResult
+                    .snapshot
+                    .val();
+
+
+            console.log('');
+            console.log(
+                '========================================'
+            );
+
+            console.log(
+                '✅ FREE KEY REDEEM SUCCESS'
+            );
+
+            console.log(
+                '🔑 Key:',
+                key
+            );
+
+            console.log(
+                '🆔 requestId:',
+                requestId
+            );
+
+            console.log(
+                '⏰ Expires:',
+                new Date(
                     finalRecord.expiresAt
-                ),
+                ).toISOString()
+            );
 
-            durationHours: 12,
-
-            status: 'active',
-
-            message:
-                'Free Key successfully activated.'
-
-        });
+            console.log(
+                '========================================'
+            );
+            console.log('');
 
 
-    } catch (error) {
+            return res
+                .status(200)
+                .json({
 
-        console.error(
-            '❌ /api/free/redeem ERROR:'
-        );
+                    ok: true,
 
-        console.error(error);
+                    key:
+                        finalRecord.key,
+
+                    expiresAt:
+                        Number(
+                            finalRecord.expiresAt
+                        ),
+
+                    durationHours:
+                        12,
+
+                    status:
+                        'active',
+
+                    message:
+                        'Free Key successfully activated.'
+
+                });
 
 
-        return res.status(500).json({
+        } catch (error) {
 
-            ok: false,
+            console.error('');
+            console.error(
+                '❌ /api/free/redeem ERROR'
+            );
 
-            error:
-                error.message ||
-                'Free Key redeem नहीं हो सकी।'
+            console.error(
+                error
+            );
 
-        });
+            console.error('');
+
+
+            return res
+                .status(500)
+                .json({
+
+                    ok: false,
+
+                    error:
+                        error.message ||
+                        'Free Key redeem नहीं हो सकी।'
+
+                });
+
+        }
 
     }
-
-});
+);
 
 
 /* =========================================================
    FREE ACCESS STATUS
 ========================================================= */
 
-app.post('/api/free/status', async (req, res) => {
+app.post(
+    '/api/free/status',
+    async (req, res) => {
 
-    console.log('\n========================================');
-    console.log('➡️ POST /api/free/status');
-    console.log('========================================');
+        console.log('');
+        console.log(
+            '========================================'
+        );
 
-    try {
+        console.log(
+            '➡️ POST /api/free/status'
+        );
 
-        const database =
-            ensureDatabase();
-
-
-        const deviceId =
-            cleanString(
-                req.body?.deviceId,
-                300
-            );
-
-
-        if (!deviceId) {
-
-            return res.status(400).json({
-
-                ok: false,
-
-                active: false,
-
-                error:
-                    'deviceId is required.'
-
-            });
-
-        }
+        console.log(
+            '========================================'
+        );
 
 
-        const deviceIdHash =
-            hashDeviceId(deviceId);
+        try {
+
+            const database =
+                ensureDatabase();
 
 
-        /*
-          Read all keys generated for this device.
-        */
-
-        const deviceIndexSnapshot =
-            await database
-                .ref(
-                    `hrry_free_device_index/${deviceIdHash}`
-                )
-                .once('value');
+            const deviceId =
+                cleanString(
+                    req.body?.deviceId,
+                    300
+                );
 
 
-        const deviceIndex =
-            deviceIndexSnapshot.val();
+            if (!deviceId) {
 
+                return res
+                    .status(400)
+                    .json({
 
-        if (!deviceIndex) {
+                        ok: false,
 
-            console.log(
-                'ℹ️ No Free Key found for this device.'
-            );
+                        active: false,
 
-            return res.status(200).json({
+                        error:
+                            'deviceId is required.'
 
-                ok: true,
+                    });
 
-                active: false
-
-            });
-
-        }
-
-
-        let requestIds = [];
-
-
-        /*
-          New format:
-          {
-            requestId1: true,
-            requestId2: true
-          }
-        */
-
-        if (
-            typeof deviceIndex === 'object' &&
-            !Array.isArray(deviceIndex)
-        ) {
-
-            requestIds =
-                Object.keys(deviceIndex);
-
-        }
-
-
-        /*
-          Backward compatibility with old format:
-          device index directly contained requestId
-        */
-
-        if (
-            typeof deviceIndex === 'string'
-        ) {
-
-            requestIds = [
-                deviceIndex
-            ];
-
-        }
-
-
-        /*
-          Newest first
-        */
-
-        requestIds.reverse();
-
-
-        for (
-            const requestId of requestIds
-        ) {
-
-            const snapshot =
-                await database
-                    .ref(
-                        `hrry_free_keys/${requestId}`
-                    )
-                    .once('value');
-
-
-            const record =
-                snapshot.val();
-
-
-            if (!record) {
-                continue;
             }
 
 
+            const deviceIdHash =
+                hashDeviceId(
+                    deviceId
+                );
+
+
+            /*
+              New device index:
+              hrry_free_device_index
+                deviceHash
+                  requestId: true
+            */
+
+            const deviceIndexSnapshot =
+                await database
+                    .ref(
+                        `hrry_free_device_index/${deviceIdHash}`
+                    )
+                    .once(
+                        'value'
+                    );
+
+
+            const deviceIndex =
+                deviceIndexSnapshot.val();
+
+
+            if (!deviceIndex) {
+
+                console.log(
+                    'ℹ️ No Free Key for device'
+                );
+
+
+                return res
+                    .status(200)
+                    .json({
+
+                        ok: true,
+
+                        active: false
+
+                    });
+
+            }
+
+
+            let requestIds = [];
+
+
+            /*
+              New format
+            */
+
             if (
-                String(
-                    record.deviceIdHash || ''
-                ) !==
-                String(deviceIdHash)
+                typeof deviceIndex === 'object' &&
+                !Array.isArray(
+                    deviceIndex
+                )
             ) {
-                continue;
+
+                requestIds =
+                    Object.keys(
+                        deviceIndex
+                    );
+
             }
 
 
             /*
-              IMPORTANT:
-              used=true DOES NOT mean access is over.
-              It means the key has been redeemed.
-              Access remains active until expiresAt.
+              Old format compatibility
             */
 
             if (
-                record.used === true &&
-                !isExpired(record.expiresAt)
+                typeof deviceIndex ===
+                'string'
             ) {
 
-                console.log(
-                    '✅ Active Free Access found:',
-                    requestId
-                );
-
-                return res.status(200).json({
-
-                    ok: true,
-
-                    active: true,
-
-                    key: record.key,
-
-                    expiresAt:
-                        Number(
-                            record.expiresAt
-                        ),
-
-                    durationHours: 12
-
-                });
+                requestIds = [
+                    deviceIndex
+                ];
 
             }
 
+
+            /*
+              Newest first
+            */
+
+            requestIds.reverse();
+
+
+            /*
+              Check every key
+            */
+
+            for (
+                const requestId
+                of requestIds
+            ) {
+
+                const snapshot =
+                    await database
+                        .ref(
+                            `hrry_free_keys/${requestId}`
+                        )
+                        .once(
+                            'value'
+                        );
+
+
+                const record =
+                    snapshot.val();
+
+
+                if (!record) {
+                    continue;
+                }
+
+
+                if (
+                    String(
+                        record.deviceIdHash ||
+                        ''
+                    ) !==
+                    String(
+                        deviceIdHash
+                    )
+                ) {
+                    continue;
+                }
+
+
+                /*
+                  IMPORTANT:
+                  used=true means redeemed,
+                  NOT expired.
+
+                  Access remains active
+                  until expiresAt.
+                */
+
+                if (
+                    record.used === true &&
+                    !isExpired(
+                        record.expiresAt
+                    )
+                ) {
+
+                    console.log(
+                        '✅ ACTIVE FREE ACCESS'
+                    );
+
+                    console.log(
+                        'Key:',
+                        record.key
+                    );
+
+                    console.log(
+                        'Expires:',
+                        new Date(
+                            record.expiresAt
+                        ).toISOString()
+                    );
+
+
+                    return res
+                        .status(200)
+                        .json({
+
+                            ok: true,
+
+                            active: true,
+
+                            key:
+                                record.key,
+
+                            expiresAt:
+                                Number(
+                                    record.expiresAt
+                                ),
+
+                            durationHours:
+                                12
+
+                        });
+
+                }
+
+            }
+
+
+            console.log(
+                'ℹ️ No active Free Access'
+            );
+
+
+            return res
+                .status(200)
+                .json({
+
+                    ok: true,
+
+                    active: false
+
+                });
+
+
+        } catch (error) {
+
+            console.error('');
+            console.error(
+                '❌ /api/free/status ERROR'
+            );
+
+            console.error(
+                error
+            );
+
+            console.error('');
+
+
+            return res
+                .status(500)
+                .json({
+
+                    ok: false,
+
+                    active: false,
+
+                    error:
+                        error.message ||
+                        'Free access status check failed.'
+
+                });
+
         }
 
-
-        console.log(
-            'ℹ️ No active Free Access.'
-        );
-
-
-        return res.status(200).json({
-
-            ok: true,
-
-            active: false
-
-        });
-
-
-    } catch (error) {
-
-        console.error(
-            '❌ /api/free/status ERROR:',
-            error
-        );
-
-
-        return res.status(500).json({
-
-            ok: false,
-
-            active: false,
-
-            error:
-                error.message ||
-                'Free access status check failed.'
-
-        });
-
     }
-
-});
+);
 
 
 /* =========================================================
-   FREE KEY HTML PAGE
+   FREE KEY PAGE
 ========================================================= */
 
-function renderFreeKeyPage(record) {
+function renderFreeKeyPage(
+    record
+) {
 
     const safeKey =
-        escapeHtml(record.key);
+        escapeHtml(
+            record.key
+        );
+
 
     const safeExpiry =
         escapeHtml(
             new Date(
-                Number(record.expiresAt)
+                Number(
+                    record.expiresAt
+                )
             ).toLocaleString(
                 'en-IN',
                 {
-                    dateStyle: 'medium',
-                    timeStyle: 'short'
+                    dateStyle:
+                        'medium',
+
+                    timeStyle:
+                        'short'
                 }
             )
         );
 
+
     const safeWebsite =
-        escapeHtml(WEBSITE_URL);
+        escapeHtml(
+            WEBSITE_URL
+        );
 
 
     return `<!DOCTYPE html>
 
-<html lang="en">
+<html lang="hi">
 
 <head>
 
@@ -1573,13 +2229,17 @@ function renderFreeKeyPage(record) {
     content="width=device-width, initial-scale=1.0"
 >
 
-<title>HRRY.TEST — Free Key</title>
+<title>
+    HRRY.TEST — Free Key
+</title>
+
 
 <style>
 
 * {
     box-sizing: border-box;
 }
+
 
 body {
 
@@ -1598,11 +2258,11 @@ body {
     background:
         radial-gradient(
             circle at top,
-            #20234a,
+            #252958,
             #070811 65%
         );
 
-    color: white;
+    color: #ffffff;
 
     font-family:
         Arial,
@@ -1610,101 +2270,153 @@ body {
 
 }
 
+
 .box {
 
     width: 100%;
 
-    max-width: 430px;
+    max-width: 440px;
 
     padding: 28px;
 
     border-radius: 28px;
 
     background:
-        rgba(25, 28, 48, 0.92);
+        rgba(
+            25,
+            28,
+            48,
+            0.94
+        );
 
     border:
         1px solid
-        rgba(255,255,255,0.12);
+        rgba(
+            255,
+            255,
+            255,
+            0.12
+        );
 
     box-shadow:
         0 25px 80px
-        rgba(0,0,0,0.5);
+        rgba(
+            0,
+            0,
+            0,
+            0.55
+        );
 
     text-align: center;
 
 }
 
+
 .icon {
 
-    font-size: 58px;
+    font-size: 56px;
 
     margin-bottom: 12px;
 
 }
 
+
 h1 {
 
-    margin: 0 0 8px;
+    margin:
+        0 0 8px;
 
-    font-size: 27px;
+    font-size:
+        28px;
 
 }
+
 
 .subtitle {
 
-    color: #aeb3c7;
+    color:
+        #b7bdd1;
 
-    line-height: 1.5;
+    line-height:
+        1.55;
 
-    margin-bottom: 22px;
+    margin-bottom:
+        22px;
 
 }
+
 
 .key {
 
-    padding: 18px 14px;
+    padding:
+        18px 14px;
 
-    border-radius: 16px;
+    border-radius:
+        16px;
 
     background:
-        rgba(99,102,241,0.15);
+        rgba(
+            99,
+            102,
+            241,
+            0.15
+        );
 
     border:
         1px solid
-        rgba(129,140,248,0.45);
+        rgba(
+            129,
+            140,
+            248,
+            0.45
+        );
 
-    font-size: 22px;
+    font-size:
+        21px;
 
-    font-weight: 800;
+    font-weight:
+        800;
 
-    letter-spacing: 1px;
+    letter-spacing:
+        1px;
 
-    word-break: break-all;
+    word-break:
+        break-all;
 
-    margin: 15px 0;
+    margin:
+        15px 0;
 
 }
+
 
 button {
 
-    width: 100%;
+    width:
+        100%;
 
-    border: 0;
+    border:
+        0;
 
-    border-radius: 15px;
+    border-radius:
+        15px;
 
-    padding: 15px;
+    padding:
+        15px;
 
-    font-size: 16px;
+    font-size:
+        16px;
 
-    font-weight: 800;
+    font-weight:
+        800;
 
-    cursor: pointer;
+    cursor:
+        pointer;
 
-    margin-top: 10px;
+    margin-top:
+        10px;
 
 }
+
 
 .copy {
 
@@ -1715,46 +2427,70 @@ button {
             #8b5cf6
         );
 
-    color: white;
+    color:
+        #ffffff;
 
 }
+
 
 .back {
 
-    display: none;
+    display:
+        none;
 
     background:
-        rgba(16,185,129,0.18);
+        rgba(
+            16,
+            185,
+            129,
+            0.18
+        );
 
     border:
         1px solid
-        rgba(16,185,129,0.5);
+        rgba(
+            16,
+            185,
+            129,
+            0.5
+        );
 
-    color: #d1fae5;
+    color:
+        #d1fae5;
 
 }
+
 
 .info {
 
-    margin-top: 18px;
+    margin-top:
+        18px;
 
-    color: #aeb3c7;
+    color:
+        #aeb4c8;
 
-    font-size: 13px;
+    font-size:
+        13px;
 
-    line-height: 1.6;
+    line-height:
+        1.7;
 
 }
 
+
 .success {
 
-    display: none;
+    display:
+        none;
 
-    margin-top: 12px;
+    margin-top:
+        12px;
 
-    color: #86efac;
+    color:
+        #86efac;
 
-    font-weight: 700;
+    font-weight:
+        700;
 
 }
 
@@ -1762,21 +2498,35 @@ button {
 
 </head>
 
+
 <body>
+
 
 <div class="box">
 
-    <div class="icon">🎁🔑</div>
 
-    <h1>Free Key Ready</h1>
+    <div class="icon">
+        🎁🔑
+    </div>
+
+
+    <h1>
+        Free Key Ready
+    </h1>
+
 
     <div class="subtitle">
         तुम्हारी 12-hour Free Key तैयार है।
     </div>
 
-    <div class="key" id="freeKey">
+
+    <div
+        class="key"
+        id="freeKey"
+    >
         ${safeKey}
     </div>
+
 
     <button
         class="copy"
@@ -1786,12 +2536,19 @@ button {
         📋 Copy Free Key
     </button>
 
+
     <div
         class="success"
         id="copySuccess"
     >
         ✅ Key copied successfully
     </div>
+
+
+    <!--
+      Initially hidden.
+      Copy successful होने के बाद दिखाई देगा.
+    -->
 
     <button
         class="back"
@@ -1801,104 +2558,192 @@ button {
         ↩️ Back to HRRY.TEST
     </button>
 
+
     <div class="info">
 
-        ⏰ Valid for 12 hours<br>
+        ⏰ Valid for 12 hours
 
-        📱 Key उसी device पर redeem होगी
-        जिससे request बनाई गई थी।
+        <br>
+
+        📱 Key उसी device/browser पर
+        redeem होगी जिससे request बनाई गई थी।
+
+        <br>
+
+        🔐 Key केवल एक बार redeem होगी।
 
     </div>
+
 
 </div>
 
 
 <script>
 
-const WEBSITE_URL =
-    ${JSON.stringify(WEBSITE_URL)};
 
+const WEBSITE_URL =
+    ${JSON.stringify(
+        safeWebsite
+    )};
+
+
+/* =========================================================
+   COPY KEY
+========================================================= */
 
 async function copyKey() {
 
     const key =
-        document.getElementById(
-            'freeKey'
-        ).innerText.trim();
+        document
+            .getElementById(
+                'freeKey'
+            )
+            .innerText
+            .trim();
 
-    let copied = false;
 
+    let copied =
+        false;
+
+
+    /*
+      Modern clipboard
+    */
 
     try {
 
-        await navigator.clipboard.writeText(
-            key
-        );
+        await navigator
+            .clipboard
+            .writeText(
+                key
+            );
 
-        copied = true;
+
+        copied =
+            true;
 
     } catch (error) {
+
+        console.log(
+            'Clipboard API failed.'
+        );
+
+    }
+
+
+    /*
+      Fallback copy
+    */
+
+    if (!copied) {
 
         try {
 
             const textarea =
-                document.createElement('textarea');
+                document.createElement(
+                    'textarea'
+                );
 
-            textarea.value = key;
+
+            textarea.value =
+                key;
+
 
             textarea.style.position =
                 'fixed';
 
+
+            textarea.style.left =
+                '-9999px';
+
+
+            textarea.style.top =
+                '0';
+
+
             textarea.style.opacity =
                 '0';
+
 
             document.body.appendChild(
                 textarea
             );
 
+
             textarea.focus();
 
             textarea.select();
 
+
             copied =
-                document.execCommand('copy');
+                document.execCommand(
+                    'copy'
+                );
+
 
             textarea.remove();
 
-        } catch (fallbackError) {
 
-            copied = false;
+        } catch (error) {
+
+            copied =
+                false;
 
         }
 
     }
 
 
+    /*
+      Successful copy
+    */
+
     if (copied) {
 
-        document.getElementById(
-            'copySuccess'
-        ).style.display = 'block';
+        document
+            .getElementById(
+                'copySuccess'
+            )
+            .style.display =
+                'block';
 
-        document.getElementById(
-            'copyButton'
-        ).innerText =
-            '✅ Key Copied';
 
-        document.getElementById(
-            'backButton'
-        ).style.display = 'block';
+        document
+            .getElementById(
+                'copyButton'
+            )
+            .innerText =
+                '✅ Key Copied';
+
+
+        /*
+          IMPORTANT:
+          Back button appears ONLY after
+          successful copy.
+        */
+
+        document
+            .getElementById(
+                'backButton'
+            )
+            .style.display =
+                'block';
+
 
     } else {
 
         alert(
-            'Key copy नहीं हो पाई। Key को manually copy करें।'
+            'Key copy नहीं हो पाई। कृपया key को manually copy करें।'
         );
 
     }
 
 }
 
+
+/* =========================================================
+   BACK TO WEBSITE
+========================================================= */
 
 function goBack() {
 
@@ -1907,7 +2752,9 @@ function goBack() {
 
 }
 
+
 </script>
+
 
 </body>
 
@@ -1920,7 +2767,28 @@ function goBack() {
    GENERIC MESSAGE PAGE
 ========================================================= */
 
-function renderMessagePage(title, message) {
+function renderMessagePage(
+    title,
+    message
+) {
+
+    const safeTitle =
+        escapeHtml(
+            title
+        );
+
+
+    const safeMessage =
+        escapeHtml(
+            message
+        );
+
+
+    const safeWebsite =
+        escapeHtml(
+            WEBSITE_URL
+        );
+
 
     return `<!DOCTYPE html>
 
@@ -1932,10 +2800,13 @@ function renderMessagePage(title, message) {
 
 <meta
     name="viewport"
-    content="width=device-width,initial-scale=1"
+    content="width=device-width, initial-scale=1"
 >
 
-<title>HRRY.TEST</title>
+<title>
+    HRRY.TEST
+</title>
+
 
 <style>
 
@@ -1953,13 +2824,18 @@ body {
 
     padding: 20px;
 
-    background: #080912;
+    background:
+        #080912;
 
-    color: white;
+    color:
+        #ffffff;
 
-    font-family: Arial, sans-serif;
+    font-family:
+        Arial,
+        sans-serif;
 
 }
+
 
 .box {
 
@@ -1971,45 +2847,63 @@ body {
 
     border-radius: 25px;
 
-    background: #171927;
+    background:
+        #171927;
 
-    border: 1px solid #30334a;
+    border:
+        1px solid
+        #30334a;
 
-    text-align: center;
+    text-align:
+        center;
 
 }
+
 
 h1 {
 
-    font-size: 25px;
+    font-size:
+        25px;
 
 }
+
 
 p {
 
-    color: #b8bdd0;
+    color:
+        #b8bdd0;
 
-    line-height: 1.6;
+    line-height:
+        1.6;
 
 }
 
+
 a {
 
-    display: block;
+    display:
+        block;
 
-    margin-top: 22px;
+    margin-top:
+        22px;
 
-    padding: 14px;
+    padding:
+        14px;
 
-    border-radius: 14px;
+    border-radius:
+        14px;
 
-    background: #6366f1;
+    background:
+        #6366f1;
 
-    color: white;
+    color:
+        #ffffff;
 
-    text-decoration: none;
+    text-decoration:
+        none;
 
-    font-weight: 800;
+    font-weight:
+        800;
 
 }
 
@@ -2017,19 +2911,32 @@ a {
 
 </head>
 
+
 <body>
+
 
 <div class="box">
 
-<h1>${escapeHtml(title)}</h1>
 
-<p>${escapeHtml(message)}</p>
+    <h1>
+        ${safeTitle}
+    </h1>
 
-<a href="${escapeHtml(WEBSITE_URL)}">
-    ↩️ Back to HRRY.TEST
-</a>
+
+    <p>
+        ${safeMessage}
+    </p>
+
+
+    <a
+        href="${safeWebsite}"
+    >
+        ↩️ Back to HRRY.TEST
+    </a>
+
 
 </div>
+
 
 </body>
 
@@ -2039,80 +2946,78 @@ a {
 
 
 /* =========================================================
-   HTML ESCAPE
-========================================================= */
-
-function escapeHtml(value) {
-
-    return String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-
-}
-
-
-/* =========================================================
-   404
-========================================================= */
-
-app.use((req, res) => {
-
-    res.status(404).json({
-
-        ok: false,
-
-        error:
-            'Endpoint not found.',
-
-        path:
-            req.path
-
-    });
-
-});
-
-
-/* =========================================================
-   ERROR HANDLER
+   404 HANDLER
 ========================================================= */
 
 app.use(
-    (error, req, res, next) => {
+    (req, res) => {
+
+        res
+            .status(404)
+            .json({
+
+                ok: false,
+
+                error:
+                    'Endpoint not found.',
+
+                path:
+                    req.path
+
+            });
+
+    }
+);
+
+
+/* =========================================================
+   GLOBAL ERROR HANDLER
+========================================================= */
+
+app.use(
+    (
+        error,
+        req,
+        res,
+        next
+    ) => {
 
         console.error(
             '❌ GLOBAL ERROR:',
             error
         );
 
+
         if (
             error.message ===
             'Not allowed by CORS'
         ) {
 
-            return res.status(403).json({
+            return res
+                .status(403)
+                .json({
 
-                ok: false,
+                    ok: false,
 
-                error:
-                    'CORS origin not allowed.'
+                    error:
+                        'CORS origin not allowed.'
 
-            });
+                });
 
         }
 
 
-        return res.status(500).json({
+        return res
+            .status(500)
+            .json({
 
-            ok: false,
+                ok: false,
 
-            error:
-                error.message ||
-                'Internal server error.'
+                error:
+                    error.message ||
+                    'Internal server error.'
 
-        });
+            });
 
     }
 );
@@ -2133,7 +3038,7 @@ app.listen(
         );
 
         console.log(
-            '🚀 HRRY.TEST Free Key Backend Started'
+            '🚀 HRRY.TEST FREE KEY BACKEND STARTED'
         );
 
         console.log(
@@ -2156,15 +3061,17 @@ app.listen(
         );
 
         console.log(
-            'Firebase:',
+            'FIREBASE:',
             firebaseReady
-                ? 'CONNECTED'
-                : 'NOT CONNECTED'
+                ? 'CONNECTED ✅'
+                : 'NOT CONNECTED ❌'
         );
 
         console.log(
             '========================================'
         );
+
+        console.log('');
 
     }
 );
