@@ -1,14 +1,17 @@
 {
-  "name": "key-system-backend",
+  "name": "hrry-test-free-backend",
   "version": "1.0.0",
-  "description": "Backend for Key Generation and Verification System",
+  "description": "HRRY Test Free Key Backend",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
+  "engines": {
+    "node": ">=22.0.0 <25.0.0"
+  },
   "dependencies": {
     "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2"
+    "express": "^5.1.0",
+    "firebase-admin": "^13.5.0"
   }
 }
